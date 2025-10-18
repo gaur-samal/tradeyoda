@@ -1,9 +1,13 @@
 """Main trading orchestrator coordinating all agents."""
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pandas as pd
 from typing import Dict, Optional
 from dhanhq import MarketFeed
+def ensure_str_date(val):
+    if isinstance(val, date):
+        return val.strftime("%Y-%m-%d")
+    return str(val)
 from src.config import config
 from src.agents import (
     DataCollectionAgent,
@@ -18,7 +22,6 @@ from src.utils.helpers import (
     validate_market_hours,
     create_trade_record
 )
-
 
 class TradingOrchestrator:
     """Main orchestrator with real-time feeds."""
