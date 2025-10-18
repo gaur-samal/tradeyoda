@@ -98,7 +98,7 @@ st.markdown('<div class="main-header">🤖 AI Trading Agent - Nifty 50 Options</
 # Sidebar - Configuration
 with st.sidebar:
     st.header("⚙️ Configuration")
-    
+   
     with st.expander("🔐 API Credentials", expanded=not st.session_state.config_updated):
         dhan_client_id = st.text_input(
             "Dhan Client ID",
@@ -126,6 +126,39 @@ with st.sidebar:
     )
     
     st.divider()
+
+    # ─────────────── NEW FEATURE FLAGS ───────────────
+    st.subheader("🧪 Experimental Features")
+
+    # Backtest mode toggle
+    cfg_backtest = st.checkbox(
+        "🧪 Enable Backtest Mode",
+        value=getattr(config, "USE_BACKTEST_MODE", False),
+        help="Load historical candles instead of live‑market data for strategy testing."
+    )
+    config.USE_BACKTEST_MODE = cfg_backtest
+
+    if cfg_backtest:
+        from datetime import date
+        c1, c2 = st.columns(2)
+        with c1:
+            config.BACKTEST_FROM = st.date_input(
+                "From Date", value=date(2025, 10, 1))
+        with c2:
+            config.BACKTEST_TO = st.date_input(
+                "To Date", value=date(2025, 10, 5))
+        st.info(
+            "Backtest mode will bypass market‑hour checks and use Historical Data API"
+        )
+
+    # No‑trades‑on‑expiry toggle
+    cfg_no_expiry = st.checkbox(
+        "🚫 No Trades on Expiry (Tuesday)",
+        value=getattr(config, "NO_TRADES_ON_EXPIRY", True),
+        help="When enabled, the algo skips any new positions on weekly expiry (Tuesday)."
+    )
+    config.NO_TRADES_ON_EXPIRY = cfg_no_expiry
+    # ───────────────────────────────────────────────
     
     st.subheader("📊 Trading Parameters")
     

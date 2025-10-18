@@ -1,9 +1,9 @@
 """Configuration management for the trading system."""
 import os
+from dhanhq import DhanContext
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
-from dhanhq import DhanContext
 
 # Load environment variables
 load_dotenv()
@@ -29,6 +29,10 @@ class Config:
     
     # Environment
     USE_SANDBOX: bool = os.getenv("USE_SANDBOX", "true").lower() == "true"
+    
+    USE_BACKTEST_MODE: bool = False   # default live
+    BACKTEST_FROM: str = "2025-10-01"
+    BACKTEST_TO: str = "2025-10-17"
     
     # Trading Parameters
     RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD_RATIO", "3.0"))
@@ -61,17 +65,10 @@ class Config:
     STREAMLIT_SERVER_PORT: int = int(os.getenv("STREAMLIT_SERVER_PORT", "8501"))
     STREAMLIT_SERVER_ADDRESS: str = os.getenv("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
     
-    _dhan_context: Optional[DhanContext] = None
-    
     @classmethod
-    def get_dhan_context(cls) -> DhanContext:
-        """Get or create DhanContext instance."""
-        if cls._dhan_context is None:
-            if not cls.DHAN_CLIENT_ID or not cls.DHAN_ACCESS_TOKEN:
-                raise ValueError("Dhan credentials not configured. Check .env file.")
-            cls._dhan_context = DhanContext(cls.DHAN_CLIENT_ID, cls.DHAN_ACCESS_TOKEN)
-        return cls._dhan_context
-    
+    def get_dhan_context(cls):
+        """Return a reusable DhanContext object."""
+        return DhanContext(cls.DHAN_CLIENT_ID, cls.DHAN_ACCESS_TOKEN)
     @classmethod
     def validate(cls) -> bool:
         """Validate configuration."""
