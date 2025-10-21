@@ -39,6 +39,10 @@ class Config:
     MAX_RISK_PERCENTAGE: float = float(os.getenv("MAX_RISK_PERCENTAGE", "2.0"))
     MIN_PROBABILITY_THRESHOLD: float = float(os.getenv("MIN_PROBABILITY_THRESHOLD", "80.0"))
     
+    # Order Execution Settings
+    ORDER_QUANTITY = 50  # Number of lots/units per trade
+    USE_SUPER_ORDER = True  # True = Super Order, False = Bracket Order
+
     # Timeframes
     ZONE_TIMEFRAME: int = int(os.getenv("ZONE_TIMEFRAME", "15"))
     TRADE_TIMEFRAME: int = int(os.getenv("TRADE_TIMEFRAME", "3"))

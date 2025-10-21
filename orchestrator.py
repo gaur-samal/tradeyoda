@@ -4,10 +4,12 @@ from datetime import datetime, timedelta, date
 import pandas as pd
 from typing import Dict, Optional
 from dhanhq import MarketFeed
+
 def ensure_str_date(val):
     if isinstance(val, date):
         return val.strftime("%Y-%m-%d")
     return str(val)
+
 from src.config import config
 from src.agents import (
     DataCollectionAgent,
@@ -30,23 +32,18 @@ class TradingOrchestrator:
         self.config = cfg
         self.dhan_context = cfg.get_dhan_context()
 
-        # ✅ initialize data agent FIRST
         self.data_agent = DataCollectionAgent(self.dhan_context)
-
-        # other agents
         self.tech_agent = TechnicalAnalysisAgent(cfg)
         self.llm_agent = LLMAnalysisAgent(cfg.OPENAI_API_KEY)
         self.options_agent = OptionsAnalysisAgent(cfg)
         self.execution_agent = ExecutionAgent(self.dhan_context)
 
-        # state
         self.active_trades = []
         self.analysis_cache = {}
         self.is_running = False
 
         log.info("🤖 Trading Orchestrator initialized")
 
-    # ------------------------------------------------------------------
     def start(self):
         """Start the trading system."""
         try:
@@ -58,7 +55,6 @@ class TradingOrchestrator:
             log.error(f"❌ Failed to start system: {e}")
             raise
 
-    # ------------------------------------------------------------------
     def _setup_realtime_feeds(self):
         """Initialize live market and order feeds."""
         nifty_instruments = [
@@ -71,17 +67,15 @@ class TradingOrchestrator:
         )
         log.info("✅ Real‑time feeds initialized")
 
-    # ------------------------------------------------------------------
     def _handle_order_update(self, order_data: dict):
-        """Handle real-time order updates."""
         try:
             data = order_data.get("Data", {})
-            order_id = data.get("orderId")
-            order_status = data.get("orderStatus")
+            order_id = data.get("OrderNo") or data.get("orderId")
+            order_status = data.get("Status") or data.get("orderStatus")
             log.info(f"📢 Order Update: {order_id} ➜ {order_status}")
 
             for trade in self.active_trades:
-                if trade.get("order_ids", {}).get("main_order_id") == order_id:
+                if trade.get("order_ids", {}).get("order_id") == order_id:
                     trade["current_status"] = order_status
                     trade["last_update"] = datetime.now()
                     if order_status == "TRADED":
@@ -90,31 +84,23 @@ class TradingOrchestrator:
         except Exception as e:
             log.error(f"Order update handler error: {e}")
 
-    # ------------------------------------------------------------------
     def _calculate_trade_pnl(self, trade: dict, order_data: dict):
-        """Compute P&L for finished trade."""
         try:
             trade["pnl"] = 0.0  # placeholder
             trade["status"] = "CLOSED"
-            log.info(f"Trade closed → P&L = {trade['pnl']}")
+            log.info(f"Trade closed → P&L = {trade['pnl']}")
         except Exception as e:
             log.error(f"P&L calculation error: {e}")
 
-    # ------------------------------------------------------------------
-    def ensure_str_date(val):
-        if isinstance(val, date):
-            return val.strftime("%Y-%m-%d")
-        return val
     async def run_zone_identification_cycle(self) -> Optional[Dict]:
         """15‑minute cycle for zone identification."""
-        log.info("🔍 Zone identification cycle starting …")
+        log.info("🔍 Zone identification cycle starting …")
         try:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=30)
-            
-            # --- NEW: handle back‑test mode ---
+
             if self.config.USE_BACKTEST_MODE:
-                log.info("🧪 Backtest mode active ‑ loading historical data")
+                log.info("🧪 Backtest mode active ‑ loading historical data")
                 from_date = ensure_str_date(self.config.BACKTEST_FROM)
                 to_date = ensure_str_date(self.config.BACKTEST_TO)
                 df_15min = self.data_agent.fetch_historical_data(
@@ -126,9 +112,8 @@ class TradingOrchestrator:
                     to_date=to_date,
                 )
             else:
-                # ⏰ live‑market window
                 if not validate_market_hours():
-                    log.info("⏰ Outside market hours")
+                    log.info("⏰ Outside market hours")
                     return None
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=30)
@@ -140,11 +125,17 @@ class TradingOrchestrator:
                     from_date=start_date.strftime("%Y-%m-%d"),
                     to_date=end_date.strftime("%Y-%m-%d"),
                 )
+            
             if df_15min.empty:
-                log.warning("⚠️ No 15‑min data available")
+                log.warning("⚠️ No 15‑min data available")
                 return None
 
-            live_quote = self.data_agent.get_live_quote(self.config.NIFTY_SECURITY_ID)
+            # Fetch live quote using SDK's quote_data method
+            quotes = self.data_agent.fetch_market_quotes(
+                securities=[self.config.NIFTY_SECURITY_ID],
+                exchange_segment=self.config.NIFTY_EXCHANGE
+            )
+            live_quote = quotes.get(str(self.config.NIFTY_SECURITY_ID), {})
             current_price = live_quote.get("LTP", df_15min["close"].iloc[-1])
 
             vp_data = self.tech_agent.calculate_volume_profile(
@@ -175,46 +166,51 @@ class TradingOrchestrator:
             }
 
             log.info(
-                f"✅ Zones: {len(zones['demand_zones'])} demand / {len(zones['supply_zones'])} supply"
+                f"✅ Zones: {len(zones['demand_zones'])} demand / {len(zones['supply_zones'])} supply"
             )
             return self.analysis_cache
 
         except Exception as e:
-            log.error(f"❌ Zone identification error: {e}")
+            log.error(f"❌ Zone identification error: {e}")
             return None
 
-    # ------------------------------------------------------------------
     async def run_trade_identification_cycle(self) -> Optional[Dict]:
         """3‑minute cycle for trade identification."""
-        log.info("🎯 Trade identification cycle starting …")
-        # Block expiry‑day trades
+        log.info("🎯 Trade identification cycle starting …")
+        
         if self.config.NO_TRADES_ON_EXPIRY:
             today = datetime.now().date()
-            # Tuesday == 1 (Python's weekday() → Mon=0, Tue=1, …)
             if today.weekday() == 1:
-                log.info("🚫 Expiry day (Tuesday) – no trades executed today")
+                log.info("🚫 Expiry day (Tuesday) – no trades executed today")
                 return None
 
         try:
             if not validate_market_hours():
-                log.info("⏰ Outside market hours")
+                log.info("⏰ Outside market hours")
                 return None
 
             if not self.analysis_cache or \
                (datetime.now() - self.analysis_cache.get("timestamp", datetime.now())).seconds > 900:
-                log.warning("⚠️ Zone analysis too old → refreshing")
+                log.warning("⚠️ Zone analysis too old → refreshing")
                 await self.run_zone_identification_cycle()
 
-            live_quote = self.data_agent.get_live_quote(self.config.NIFTY_SECURITY_ID)
+            # Fetch live quote using SDK's quote_data method
+            quotes = self.data_agent.fetch_market_quotes(
+                securities=[self.config.NIFTY_SECURITY_ID],
+                exchange_segment=self.config.NIFTY_EXCHANGE
+            )
+            print(quotes)
+            live_quote = quotes.get(str(self.config.NIFTY_SECURITY_ID), {})
             current_price = live_quote.get("LTP")
+            
             if not current_price:
-                log.warning("⚠️ No live price")
+                log.warning("⚠️ No live price")
                 return None
 
             zones = self.analysis_cache.get("zones", {})
             trade_opportunity = self._check_zone_proximity(current_price, zones)
             if not trade_opportunity:
-                log.info("ℹ️ No trade opportunity — price away from zones")
+                log.info("ℹ️ No trade opportunity — price away from zones")
                 return None
 
             expiry = get_nearest_expiry()
@@ -230,7 +226,7 @@ class TradingOrchestrator:
                 zones, option_analysis, trade_opportunity["direction"]
             )
             if not trade_setup:
-                log.info("ℹ️ No valid trade setup")
+                log.info("ℹ️ No valid trade setup")
                 return None
 
             llm_eval = self.llm_agent.evaluate_trade_setup({
@@ -241,7 +237,7 @@ class TradingOrchestrator:
 
             if llm_eval.get("trade_approved") and \
                llm_eval.get("probability_estimate", 0) >= self.config.MIN_PROBABILITY_THRESHOLD:
-                log.info(f"✅ Trade approved at {llm_eval['probability_estimate']} %")
+                log.info(f"✅ Trade approved at {llm_eval['probability_estimate']} %")
                 result = await self._execute_trade(trade_setup, llm_eval)
                 return {
                     "trade_setup": trade_setup,
@@ -254,10 +250,9 @@ class TradingOrchestrator:
             return None
 
         except Exception as e:
-            log.error(f"❌ Trade identification error: {e}")
+            log.error(f"❌ Trade identification error: {e}")
             return None
 
-    # ------------------------------------------------------------------
     def _determine_trend(self, df: pd.DataFrame) -> str:
         try:
             ema20 = df["close"].ewm(span=20).mean()
@@ -270,7 +265,6 @@ class TradingOrchestrator:
         except Exception:
             return "Neutral"
 
-    # ------------------------------------------------------------------
     def _check_zone_proximity(self, current_price: float, zones: Dict) -> Optional[Dict]:
         for zone in zones.get("demand_zones", []):
             if zone["confidence"] >= 80:
@@ -282,44 +276,62 @@ class TradingOrchestrator:
                     return {"direction": "PUT", "zone": zone}
         return None
 
-    # ------------------------------------------------------------------
     async def _execute_trade(self, setup: Dict, evaluation: Dict) -> Dict:
+        """Execute trade with configurable quantity and order type."""
         try:
             record = create_trade_record(setup, evaluation)
             if self.config.USE_SANDBOX:
-                log.info("📝 Paper trade recorded (sandbox mode)")
+                log.info("📝 Paper trade recorded (sandbox mode)")
                 record["status"] = "PAPER"
                 self.active_trades.append(record)
                 return {"success": True, "mode": "paper"}
 
+            # Build order parameters from config and setup
             order_params = {
                 "security_id": setup.get("security_id", "13"),
-                "quantity": 50,
+                "exchange_segment": setup.get("exchange_segment", "NSE_FNO"),
+                "transaction_type": setup.get("transaction_type", "BUY"),
+                "order_type": setup.get("order_type", "LIMIT"),
+                "product_type": setup.get("product_type", "INTRADAY"),
+                "quantity": getattr(self.config, "ORDER_QUANTITY", 50),  # From config or default 50
                 "entry_price": setup["entry_price"],
                 "stop_loss": setup["stop_loss"],
-                "target_price": setup["target_price"]
+                "target_price": setup["target_price"],
+                "trailing_jump": setup.get("trailing_jump", 0),
+                "use_super_order": getattr(self.config, "USE_SUPER_ORDER", True),  # From config or default True
+                "correlation_id": f"TRADE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             }
-            result = self.execution_agent.place_bracket_order(order_params)
+
+            log.info(f"📤 Executing trade: {order_params['transaction_type']} "
+                    f"{order_params['quantity']} @ {order_params['entry_price']}")
+            
+            # Call the unified order placement function
+            result = self.execution_agent.place_bracket_or_super_order(order_params)
+            
             if result["success"]:
                 record["order_ids"] = result
                 record["status"] = "ACTIVE"
+                record["order_type"] = "SUPER_ORDER" if order_params["use_super_order"] else "BRACKET_ORDER"
                 self.active_trades.append(record)
+                log.info(f"✅ Trade executed successfully: Order ID {result.get('order_id')}")
+            else:
+                log.error(f"❌ Trade execution failed: {result}")
+            
             return result
+            
         except Exception as e:
-            log.error(f"❌ Trade execution error: {e}")
+            log.error(f"❌ Trade execution error: {e}")
             return {"success": False, "error": str(e)}
 
-    # ------------------------------------------------------------------
     def get_active_trades(self) -> list:
         return self.active_trades
 
-    # ------------------------------------------------------------------
     def shutdown(self):
-        log.info("🛑 Shutting down trading system …")
+        log.info("🛑 Shutting down trading system …")
         self.is_running = False
         if hasattr(self, "data_agent"):
             self.data_agent.stop_live_feed()
         if hasattr(self, "execution_agent"):
             self.execution_agent.stop_order_updates()
-        log.info("✅ System shutdown complete")
+        log.info("✅ System shutdown complete")
 

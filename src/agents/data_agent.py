@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from dhanhq import dhanhq, MarketFeed
 import threading
+import requests
 import queue
 import time
 from src.utils.logger import log
@@ -125,7 +126,7 @@ class DataCollectionAgent:
                 "to_date": to_date,
             }
             result = self.dhan.intraday_minute_data(**params)
-            
+            #print(result)
             if not result or result.get("status") != "success":
                 return pd.DataFrame()
             
@@ -137,18 +138,17 @@ class DataCollectionAgent:
         except Exception as e:
             log.error(f"❌ Historical fetch error: {str(e)}")
             return pd.DataFrame()
-    
     def fetch_option_chain(self, security_id, exchange_segment, expiry_date):
         """
-        Fetch option chain (aligned with get_option_chain in v2.2).
+        Fetch option chain using correct SDK method.
         Throttled by 3 secs to comply with API limits.
         """
         try:
             time.sleep(3)
-            chain = self.dhan.get_option_chain(
-                underlying_security_id=security_id,
-                underlying_exchange_segment=exchange_segment,
-                expiry_date=expiry_date
+            chain = self.dhan.option_chain(
+                under_security_id=security_id,
+                under_exchange_segment=exchange_segment,
+                expiry=expiry_date
             )
             if chain and chain.get("status") == "success":
                 return pd.DataFrame(chain["data"])
@@ -157,12 +157,27 @@ class DataCollectionAgent:
             log.error(f"❌ Option chain fetch error: {str(e)}")
             return pd.DataFrame()
     
-    def fetch_market_quotes(self, securities):
-        """Fetch market quote data per v2.2 (supports up to 1000 instruments)."""
+    def fetch_market_quotes(self, securities, exchange_segment="IDX_I"):
+        """
+        Fetch market quote data using SDK's quote_data method.
+        
+        Args:
+            securities: List of security IDs
+            exchange_segment: Exchange segment (default: IDX_I for Nifty)
+        """
         try:
-            data = self.dhan.get_market_quote(securities)
-            return data
+            data = self.dhan.quote_data(
+                securities={exchange_segment: securities}
+            )
+            print(data)
+            if data and data.get("status") == "success":
+                # Return as dict keyed by security_id for easy lookup
+                quotes = {}
+                for quote in data.get("data", []):
+                    sec_id = str(quote.get("security_id"))
+                    quotes[sec_id] = quote
+                return quotes
+            return {}
         except Exception as e:
             log.error(f"Market quote error: {str(e)}")
-            return {}
-
+            return {}  
