@@ -56,16 +56,19 @@ class TradingOrchestrator:
             raise
 
     def _setup_realtime_feeds(self):
-        """Initialize live market and order feeds."""
+        """Initialize live market and order feeds - NOW USING NIFTY FUTURES."""
+        # Subscribe to Nifty FUTURES for live data
         nifty_instruments = [
-            ("IDX_I", self.config.NIFTY_SECURITY_ID, MarketFeed.Full)
+            (self.config.NIFTY_FUTURES_EXCHANGE, 
+             self.config.NIFTY_FUTURES_SECURITY_ID, 
+             MarketFeed.Full)
         ]
         self.data_agent.start_live_feed(nifty_instruments)
 
         self.execution_agent.start_order_updates(
             on_update_callback=self._handle_order_update
         )
-        log.info("✅ Real‑time feeds initialized")
+        log.info("✅ Real‑time feeds initialized (Nifty Futures)")
 
     def _handle_order_update(self, order_data: dict):
         try:
@@ -93,8 +96,8 @@ class TradingOrchestrator:
             log.error(f"P&L calculation error: {e}")
 
     async def run_zone_identification_cycle(self) -> Optional[Dict]:
-        """15‑minute cycle for zone identification."""
-        log.info("🔍 Zone identification cycle starting …")
+        """15‑minute cycle for zone identification - USING NIFTY FUTURES."""
+        log.info("🔍 Zone identification cycle starting (Nifty Futures)…")
         try:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=30)
@@ -103,10 +106,11 @@ class TradingOrchestrator:
                 log.info("🧪 Backtest mode active ‑ loading historical data")
                 from_date = ensure_str_date(self.config.BACKTEST_FROM)
                 to_date = ensure_str_date(self.config.BACKTEST_TO)
+                # Fetch FUTURES data instead of index
                 df_15min = self.data_agent.fetch_historical_data(
-                    security_id=self.config.NIFTY_SECURITY_ID,
-                    exchange_segment=self.config.NIFTY_EXCHANGE,
-                    instrument_type="INDEX",
+                    security_id=self.config.NIFTY_FUTURES_SECURITY_ID,
+                    exchange_segment=self.config.NIFTY_FUTURES_EXCHANGE,
+                    instrument_type=self.config.ANALYSIS_INSTRUMENT_TYPE,
                     timeframe=str(self.config.ZONE_TIMEFRAME),
                     from_date=from_date,
                     to_date=to_date,
@@ -117,10 +121,11 @@ class TradingOrchestrator:
                     return None
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=30)
+                # Fetch FUTURES data instead of index
                 df_15min = self.data_agent.fetch_historical_data(
-                    security_id=self.config.NIFTY_SECURITY_ID,
-                    exchange_segment=self.config.NIFTY_EXCHANGE,
-                    instrument_type="INDEX",
+                    security_id=self.config.NIFTY_FUTURES_SECURITY_ID,
+                    exchange_segment=self.config.NIFTY_FUTURES_EXCHANGE,
+                    instrument_type=self.config.ANALYSIS_INSTRUMENT_TYPE,
                     timeframe=str(self.config.ZONE_TIMEFRAME),
                     from_date=start_date.strftime("%Y-%m-%d"),
                     to_date=end_date.strftime("%Y-%m-%d"),
@@ -130,14 +135,18 @@ class TradingOrchestrator:
                 log.warning("⚠️ No 15‑min data available")
                 return None
 
-            # Fetch live quote using SDK's quote_data method
+            # Fetch live quote from FUTURES
             quotes = self.data_agent.fetch_market_quotes(
-                securities=[self.config.NIFTY_SECURITY_ID],
-                exchange_segment=self.config.NIFTY_EXCHANGE
+                securities=[self.config.NIFTY_FUTURES_SECURITY_ID],
+                exchange_segment=self.config.NIFTY_FUTURES_EXCHANGE
             )
-            live_quote = quotes.get(str(self.config.NIFTY_SECURITY_ID), {})
+            live_quote = quotes.get(str(self.config.NIFTY_FUTURES_SECURITY_ID), {})
             current_price = live_quote.get("LTP", df_15min["close"].iloc[-1])
 
+            # Calculate ALL technical indicators (existing + new)
+            tech_indicators = self.tech_agent.calculate_comprehensive_indicators(df_15min)
+            
+            # Existing zone calculations
             vp_data = self.tech_agent.calculate_volume_profile(
                 df_15min, self.config.VP_VALUE_AREA
             )
@@ -149,24 +158,36 @@ class TradingOrchestrator:
                 df_15min, vp_data, order_blocks, fvgs
             )
 
+            # Enhanced market context with new indicators
             market_context = {
                 "trend": self._determine_trend(df_15min),
                 "volatility": float(df_15min["close"].pct_change().std()),
                 "current_price": current_price,
+                # NEW: Add technical indicators
+                "rsi": tech_indicators.get('latest_rsi'),
+                "rsi_signal": tech_indicators.get('rsi_signal'),
+                "bb_position": tech_indicators.get('bb_position'),
+                "recent_candlestick_patterns": tech_indicators.get('candlestick_patterns', [])[-5:],
+                "recent_chart_patterns": tech_indicators.get('chart_patterns', [])[-3:],
             }
 
+            # Pass enhanced context to LLM
             llm_analysis = self.llm_agent.analyze_zones(zones, market_context)
+            
             self.analysis_cache = {
                 "zones": zones,
                 "llm_analysis": llm_analysis,
                 "vp_data": vp_data,
                 "market_context": market_context,
+                "technical_indicators": tech_indicators,  # NEW
                 "timestamp": datetime.now(),
                 "current_price": current_price,
             }
 
             log.info(
-                f"✅ Zones: {len(zones['demand_zones'])} demand / {len(zones['supply_zones'])} supply"
+                f"✅ Zones: {len(zones['demand_zones'])} demand / {len(zones['supply_zones'])} supply | "
+                f"RSI: {tech_indicators.get('latest_rsi', 'N/A')} ({tech_indicators.get('rsi_signal', 'N/A')}) | "
+                f"BB: {tech_indicators.get('bb_position', 'N/A')}"
             )
             return self.analysis_cache
 
@@ -180,7 +201,7 @@ class TradingOrchestrator:
         
         if self.config.NO_TRADES_ON_EXPIRY:
             today = datetime.now().date()
-            if today.weekday() == 1:
+            if today.weekday() == 1:  # Tuesday
                 log.info("🚫 Expiry day (Tuesday) – no trades executed today")
                 return None
 
@@ -194,13 +215,13 @@ class TradingOrchestrator:
                 log.warning("⚠️ Zone analysis too old → refreshing")
                 await self.run_zone_identification_cycle()
 
-            # Fetch live quote using SDK's quote_data method
+            # Fetch live quote from FUTURES
             quotes = self.data_agent.fetch_market_quotes(
-                securities=[self.config.NIFTY_SECURITY_ID],
-                exchange_segment=self.config.NIFTY_EXCHANGE
+                securities=[self.config.NIFTY_FUTURES_SECURITY_ID],
+                exchange_segment=self.config.NIFTY_FUTURES_EXCHANGE
             )
             print(quotes)
-            live_quote = quotes.get(str(self.config.NIFTY_SECURITY_ID), {})
+            live_quote = quotes.get(str(self.config.NIFTY_FUTURES_SECURITY_ID), {})
             current_price = live_quote.get("LTP")
             
             if not current_price:
@@ -213,10 +234,11 @@ class TradingOrchestrator:
                 log.info("ℹ️ No trade opportunity — price away from zones")
                 return None
 
+            # Fetch option chain using INDEX as underlying (correct for options)
             expiry = get_nearest_expiry()
             option_chain = self.data_agent.fetch_option_chain(
-                self.config.NIFTY_SECURITY_ID,
-                self.config.NIFTY_EXCHANGE,
+                self.config.NIFTY_INDEX_SECURITY_ID,  # Use index for options
+                self.config.NIFTY_INDEX_EXCHANGE,
                 expiry
             )
             option_analysis = self.options_agent.analyze_option_chain(
@@ -229,15 +251,19 @@ class TradingOrchestrator:
                 log.info("ℹ️ No valid trade setup")
                 return None
 
+            # Enhanced trade evaluation with all indicators
             llm_eval = self.llm_agent.evaluate_trade_setup({
                 **trade_setup,
                 "zones": zones,
-                "option_analysis": option_analysis
+                "option_analysis": option_analysis,
+                "technical_indicators": self.analysis_cache.get("technical_indicators", {}),
+                "market_context": self.analysis_cache.get("market_context", {})
             })
 
             if llm_eval.get("trade_approved") and \
                llm_eval.get("probability_estimate", 0) >= self.config.MIN_PROBABILITY_THRESHOLD:
-                log.info(f"✅ Trade approved at {llm_eval['probability_estimate']} %")
+                log.info(f"✅ Trade approved at {llm_eval['probability_estimate']}% "
+                        f"(Confluence: {llm_eval.get('confluence_count', 0)})")
                 result = await self._execute_trade(trade_setup, llm_eval)
                 return {
                     "trade_setup": trade_setup,
@@ -246,7 +272,8 @@ class TradingOrchestrator:
                     "timestamp": datetime.now()
                 }
 
-            log.info(f"Trade rejected ({llm_eval.get('probability_estimate', 0)}%)")
+            log.info(f"Trade rejected ({llm_eval.get('probability_estimate', 0)}% - "
+                    f"Confluence: {llm_eval.get('confluence_count', 0)})")
             return None
 
         except Exception as e:
@@ -286,26 +313,24 @@ class TradingOrchestrator:
                 self.active_trades.append(record)
                 return {"success": True, "mode": "paper"}
 
-            # Build order parameters from config and setup
             order_params = {
                 "security_id": setup.get("security_id", "13"),
                 "exchange_segment": setup.get("exchange_segment", "NSE_FNO"),
                 "transaction_type": setup.get("transaction_type", "BUY"),
                 "order_type": setup.get("order_type", "LIMIT"),
                 "product_type": setup.get("product_type", "INTRADAY"),
-                "quantity": getattr(self.config, "ORDER_QUANTITY", 50),  # From config or default 50
+                "quantity": getattr(self.config, "ORDER_QUANTITY", 1),
                 "entry_price": setup["entry_price"],
                 "stop_loss": setup["stop_loss"],
                 "target_price": setup["target_price"],
                 "trailing_jump": setup.get("trailing_jump", 0),
-                "use_super_order": getattr(self.config, "USE_SUPER_ORDER", True),  # From config or default True
+                "use_super_order": getattr(self.config, "USE_SUPER_ORDER", True),
                 "correlation_id": f"TRADE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             }
 
             log.info(f"📤 Executing trade: {order_params['transaction_type']} "
                     f"{order_params['quantity']} @ {order_params['entry_price']}")
             
-            # Call the unified order placement function
             result = self.execution_agent.place_bracket_or_super_order(order_params)
             
             if result["success"]:

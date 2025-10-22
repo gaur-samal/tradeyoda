@@ -3,7 +3,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 
-
 def create_candlestick_chart(df: pd.DataFrame, title: str = "Price Chart"):
     """Create candlestick chart with volume."""
     fig = make_subplots(
@@ -49,6 +48,83 @@ def create_candlestick_chart(df: pd.DataFrame, title: str = "Price Chart"):
     
     return fig
 
+def create_rsi_chart(df: pd.DataFrame, rsi_series: pd.Series):
+    """Create RSI indicator chart."""
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=rsi_series,
+        mode='lines',
+        name='RSI',
+        line=dict(color='blue', width=2)
+    ))
+    
+    # Add overbought/oversold lines
+    fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought")
+    fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold")
+    fig.add_hline(y=50, line_dash="dot", line_color="gray", annotation_text="Neutral")
+    
+    fig.update_layout(
+        title="RSI (Relative Strength Index)",
+        xaxis_title="Time",
+        yaxis_title="RSI",
+        height=300,
+        yaxis=dict(range=[0, 100])
+    )
+    
+    return fig
+
+def create_bollinger_bands_chart(df: pd.DataFrame, bb_data: dict):
+    """Create Bollinger Bands chart with price."""
+    fig = go.Figure()
+    
+    # Price line
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=df['close'],
+        mode='lines',
+        name='Price',
+        line=dict(color='blue', width=2)
+    ))
+    
+    # Upper band
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=bb_data['upper_band'],
+        mode='lines',
+        name='Upper Band',
+        line=dict(color='red', width=1, dash='dash')
+    ))
+    
+    # Middle band (SMA)
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=bb_data['middle_band'],
+        mode='lines',
+        name='Middle Band (SMA)',
+        line=dict(color='orange', width=1)
+    ))
+    
+    # Lower band
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=bb_data['lower_band'],
+        mode='lines',
+        name='Lower Band',
+        line=dict(color='green', width=1, dash='dash'),
+        fill='tonexty',
+        fillcolor='rgba(102, 126, 234, 0.1)'
+    ))
+    
+    fig.update_layout(
+        title="Bollinger Bands",
+        xaxis_title="Time",
+        yaxis_title="Price",
+        height=400
+    )
+    
+    return fig
 
 def create_volume_profile_chart(volume_data: dict, poc: float, vah: float, val: float):
     """Create volume profile horizontal bar chart."""
@@ -98,7 +174,6 @@ def create_volume_profile_chart(volume_data: dict, poc: float, vah: float, val: 
     )
     
     return fig
-
 
 def create_pnl_chart(trades: list):
     """Create P&L curve chart."""

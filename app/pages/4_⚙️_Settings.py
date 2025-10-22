@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.config import config
 
-st.set_page_config(page_title="Settings", page_icon="⚙️", layout="wide")
+st.set_page_config(page_title="Settings - Trade Yoda", page_icon="⚙️", layout="wide")
 
 st.title("⚙️ System Settings")
 
@@ -56,7 +56,7 @@ with tab1:
             config.OPENAI_MODEL = openai_model
             
             st.success("✅ API configuration saved!")
-            st.info("⚠️ Restart the agent for changes to take effect")
+            st.info("⚠️ Restart Trade Yoda for changes to take effect")
 
 with tab2:
     st.subheader("Trading Parameters")
@@ -112,7 +112,7 @@ with tab2:
                 step=5
             )
         
-        st.markdown("#### Technical Indicators")
+        st.markdown("#### Technical Indicators - Classic")
         col3, col4 = st.columns(2)
         
         with col3:
@@ -134,6 +134,71 @@ with tab2:
                 format="%.3f"
             )
         
+        st.markdown("#### Technical Indicators - RSI & Bollinger Bands")
+        col5, col6 = st.columns(2)
+        
+        with col5:
+            rsi_period = st.number_input(
+                "RSI Period",
+                min_value=5,
+                max_value=30,
+                value=getattr(config, 'RSI_PERIOD', 14),
+                step=1
+            )
+            rsi_overbought = st.number_input(
+                "RSI Overbought Level",
+                min_value=60.0,
+                max_value=90.0,
+                value=float(getattr(config, 'RSI_OVERBOUGHT', 70)),
+                step=5.0
+            )
+            rsi_oversold = st.number_input(
+                "RSI Oversold Level",
+                min_value=10.0,
+                max_value=40.0,
+                value=float(getattr(config, 'RSI_OVERSOLD', 30)),
+                step=5.0
+            )
+        
+        with col6:
+            bb_period = st.number_input(
+                "Bollinger Bands Period",
+                min_value=10,
+                max_value=50,
+                value=getattr(config, 'BB_PERIOD', 20),
+                step=5
+            )
+            bb_std_dev = st.number_input(
+                "Bollinger Bands Std Deviation",
+                min_value=1.0,
+                max_value=3.0,
+                value=float(getattr(config, 'BB_STD_DEV', 2.0)),
+                step=0.5
+            )
+        
+        st.markdown("#### Pattern Detection")
+        col7, col8 = st.columns(2)
+        
+        with col7:
+            enable_candle_patterns = st.checkbox(
+                "Enable Candlestick Patterns",
+                value=getattr(config, 'ENABLE_CANDLESTICK_PATTERNS', True)
+            )
+        
+        with col8:
+            enable_chart_patterns = st.checkbox(
+                "Enable Chart Patterns",
+                value=getattr(config, 'ENABLE_CHART_PATTERNS', True)
+            )
+        
+        min_pattern_confidence = st.slider(
+            "Minimum Pattern Confidence (%)",
+            min_value=50,
+            max_value=90,
+            value=int(getattr(config, 'MIN_PATTERN_CONFIDENCE', 70)),
+            step=5
+        )
+        
         submitted = st.form_submit_button("💾 Save Trading Parameters")
         
         if submitted:
@@ -145,6 +210,16 @@ with tab2:
             config.VP_VALUE_AREA = vp_value_area
             config.OB_LOOKBACK = ob_lookback
             config.FVG_MIN_SIZE = fvg_min_size
+            
+            # NEW parameters
+            config.RSI_PERIOD = rsi_period
+            config.RSI_OVERBOUGHT = rsi_overbought
+            config.RSI_OVERSOLD = rsi_oversold
+            config.BB_PERIOD = bb_period
+            config.BB_STD_DEV = bb_std_dev
+            config.ENABLE_CANDLESTICK_PATTERNS = enable_candle_patterns
+            config.ENABLE_CHART_PATTERNS = enable_chart_patterns
+            config.MIN_PATTERN_CONFIDENCE = min_pattern_confidence
             
             st.success("✅ Trading parameters saved!")
 
@@ -161,6 +236,9 @@ with tab3:
     - 📊 Trade execution alerts
     - ⚠️ Risk warnings
     - 🎯 Zone proximity alerts
+    - 📈 RSI overbought/oversold alerts
+    - 📊 Bollinger Band breakout alerts
+    - 🕯️ Candlestick pattern alerts
     """)
 
 with tab4:
@@ -217,4 +295,8 @@ with tab4:
                 with open(log_file, 'w') as f:
                     f.write("")
                 st.success("✅ Logs cleared!")
+
+# Footer
+st.markdown("---")
+st.caption("🧙‍♂️ Trade Yoda - Powered by NeuralVectors Technologies LLP")
 

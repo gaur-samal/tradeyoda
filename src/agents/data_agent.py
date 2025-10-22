@@ -165,8 +165,12 @@ class DataCollectionAgent:
             securities: List of security IDs
             exchange_segment: Exchange segment (default: IDX_I for Nifty)
         """
+        # Convert securities to integers if they're strings
+        securities = [int(sec) if isinstance(sec, str) else sec for sec in securities]
         try:
-            data = self.dhan.quote_data(
+            print(f"exchange_segment: {exchange_segment}")
+            print(f"securities: {securities}")
+            data = self.dhan.ticker_data(
                 securities={exchange_segment: securities}
             )
             print(data)

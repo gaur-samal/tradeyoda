@@ -2,7 +2,6 @@
 import streamlit as st
 from typing import List, Dict
 
-
 def display_metric_card(title: str, value: str, delta: str = None, icon: str = "📊"):
     """Display a styled metric card."""
     st.markdown(f"""
@@ -20,7 +19,6 @@ def display_metric_card(title: str, value: str, delta: str = None, icon: str = "
     </div>
     """, unsafe_allow_html=True)
 
-
 def calculate_trade_metrics(trades: List[Dict]) -> Dict:
     """Calculate trading performance metrics."""
     if not trades:
@@ -32,7 +30,8 @@ def calculate_trade_metrics(trades: List[Dict]) -> Dict:
             'total_pnl': 0,
             'avg_win': 0,
             'avg_loss': 0,
-            'profit_factor': 0
+            'profit_factor': 0,
+            'avg_confluence': 0
         }
     
     total_trades = len(trades)
@@ -49,6 +48,10 @@ def calculate_trade_metrics(trades: List[Dict]) -> Dict:
     total_losses = abs(sum([t['pnl'] for t in losing_trades]))
     profit_factor = total_wins / total_losses if total_losses > 0 else 0
     
+    # NEW: Calculate average confluence score
+    confluence_scores = [t.get('confluence_count', 0) for t in trades]
+    avg_confluence = sum(confluence_scores) / len(confluence_scores) if confluence_scores else 0
+    
     return {
         'total_trades': total_trades,
         'winning_trades': len(winning_trades),
@@ -57,15 +60,15 @@ def calculate_trade_metrics(trades: List[Dict]) -> Dict:
         'total_pnl': total_pnl,
         'avg_win': avg_win,
         'avg_loss': avg_loss,
-        'profit_factor': profit_factor
+        'profit_factor': profit_factor,
+        'avg_confluence': avg_confluence
     }
-
 
 def display_performance_dashboard(trades: List[Dict]):
     """Display comprehensive performance metrics."""
     metrics = calculate_trade_metrics(trades)
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.metric("Total Trades", metrics['total_trades'])
@@ -82,4 +85,8 @@ def display_performance_dashboard(trades: List[Dict]):
     with col4:
         st.metric("Avg Win", f"₹{metrics['avg_win']:,.2f}")
         st.metric("Avg Loss", f"₹{metrics['avg_loss']:,.2f}")
+    
+    with col5:
+        st.metric("Avg Confluence", f"{metrics['avg_confluence']:.1f}")
+        st.caption("Average number of confirming indicators per trade")
 

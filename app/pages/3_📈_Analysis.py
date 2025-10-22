@@ -10,13 +10,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils.helpers import format_price
 
-st.set_page_config(page_title="Analysis", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Analysis - Trade Yoda", page_icon="📈", layout="wide")
 
 st.title("📈 Market Analysis & Insights")
 
 # Check orchestrator
 if 'orchestrator' not in st.session_state or st.session_state.orchestrator is None:
-    st.warning("⚠️ Please start the agent from the main page first")
+    st.warning("⚠️ Please start Trade Yoda from the main page first")
     st.stop()
 
 orchestrator = st.session_state.orchestrator
@@ -29,10 +29,12 @@ if not orchestrator.analysis_cache:
 cache = orchestrator.analysis_cache
 
 # Tabs for different analysis
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Volume Profile",
     "📦 Order Blocks",
     "⚡ Fair Value Gaps",
+    "📈 RSI & Bollinger Bands",
+    "🕯️ Patterns",
     "🤖 LLM Analysis"
 ])
 
@@ -76,7 +78,7 @@ with tab1:
                         'Volume': f"{volume:,.0f}",
                         'Type': 'Support/Resistance'
                     })
-                st.dataframe(pd.DataFrame(hvn_data), use_container_width=True)
+                st.dataframe(pd.DataFrame(hvn_data), width="stretch")
                 st.caption("High volume areas often act as strong support/resistance")
         
         with col2:
@@ -90,7 +92,7 @@ with tab1:
                         'Volume': f"{volume:,.0f}",
                         'Type': 'Low Interest'
                     })
-                st.dataframe(pd.DataFrame(lvn_data), use_container_width=True)
+                st.dataframe(pd.DataFrame(lvn_data), width="stretch")
                 st.caption("Low volume areas may see quick price movement")
         
         st.divider()
@@ -130,7 +132,7 @@ with tab1:
                 height=500
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     else:
         st.info("No volume profile data available")
 
@@ -199,6 +201,171 @@ with tab3:
     st.info("Fair Value Gap visualization - Implementation pending")
 
 with tab4:
+    st.subheader("📈 RSI & Bollinger Bands Analysis")
+    
+    tech_indicators = cache.get('technical_indicators', {})
+    
+    if tech_indicators:
+        # RSI Section
+        st.markdown("### RSI (Relative Strength Index)")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            rsi = tech_indicators.get('latest_rsi')
+            if rsi:
+                st.metric("Current RSI", f"{rsi:.2f}")
+        
+        with col2:
+            rsi_signal = tech_indicators.get('rsi_signal', 'NEUTRAL')
+            st.metric("Signal", rsi_signal)
+        
+        with col3:
+            if rsi:
+                if rsi > 70:
+                    st.error("⚠️ Overbought Zone")
+                elif rsi < 30:
+                    st.success("✅ Oversold Zone")
+                else:
+                    st.info("📊 Neutral Zone")
+        
+        st.markdown("""
+        **RSI Interpretation:**
+        - **Above 70:** Overbought - potential reversal down
+        - **Below 30:** Oversold - potential reversal up
+        - **50-70:** Bullish momentum
+        - **30-50:** Bearish momentum
+        """)
+        
+        st.divider()
+        
+        # Bollinger Bands Section
+        st.markdown("### Bollinger Bands")
+        
+        bb_data = tech_indicators.get('bollinger_bands', {})
+        bb_position = tech_indicators.get('bb_position', 'N/A')
+        
+        if bb_data:
+            bb_col1, bb_col2 = st.columns(2)
+            
+            with bb_col1:
+                st.metric("Current Position", bb_position)
+                
+                if bb_position == 'ABOVE_UPPER':
+                    st.warning("⚠️ Price above upper band - Potential reversal or strong trend")
+                elif bb_position == 'BELOW_LOWER':
+                    st.success("✅ Price below lower band - Potential bounce or strong decline")
+                else:
+                    st.info("📊 Price within bands - Normal range")
+            
+            with bb_col2:
+                st.markdown("**Band Levels:**")
+                if not bb_data.get('upper_band').empty:
+                    upper = bb_data['upper_band'].iloc[-1]
+                    middle = bb_data['middle_band'].iloc[-1]
+                    lower = bb_data['lower_band'].iloc[-1]
+                    bandwidth = bb_data['bandwidth'].iloc[-1]
+                    
+                    st.caption(f"Upper Band: {format_price(upper)}")
+                    st.caption(f"Middle Band (SMA): {format_price(middle)}")
+                    st.caption(f"Lower Band: {format_price(lower)}")
+                    st.caption(f"Bandwidth: {bandwidth:.2f}%")
+        
+        st.markdown("""
+        **Bollinger Bands Interpretation:**
+        - **Price at Upper Band:** Potential overbought, watch for reversal
+        - **Price at Lower Band:** Potential oversold, watch for bounce
+        - **Squeeze (Narrow Bands):** Low volatility, potential breakout coming
+        - **Expansion (Wide Bands):** High volatility, strong trend in progress
+        """)
+    else:
+        st.info("No RSI or Bollinger Bands data available")
+
+with tab5:
+    st.subheader("🕯️ Candlestick & Chart Patterns")
+    
+    tech_indicators = cache.get('technical_indicators', {})
+    
+    if tech_indicators:
+        pattern_col1, pattern_col2 = st.columns(2)
+        
+        with pattern_col1:
+            st.markdown("### 🕯️ Candlestick Patterns")
+            
+            candle_patterns = tech_indicators.get('candlestick_patterns', [])
+            
+            if candle_patterns:
+                st.caption(f"**Found {len(candle_patterns)} patterns**")
+                
+                for pattern in candle_patterns[-10:]:  # Show last 10
+                    signal_emoji = {
+                        'BULLISH': '🟢',
+                        'BEARISH': '🔴',
+                        'NEUTRAL': '🟡'
+                    }.get(pattern['signal'], '⚪')
+                    
+                    with st.expander(f"{signal_emoji} {pattern['pattern']} - {pattern['confidence']}%"):
+                        st.caption(f"**Signal:** {pattern['signal']}")
+                        st.caption(f"**Confidence:** {pattern['confidence']}%")
+                        st.caption(f"**Time:** {pattern['timestamp']}")
+                        st.progress(pattern['confidence'] / 100)
+                
+                st.markdown("""
+                **Common Patterns:**
+                - **Bullish Engulfing:** Strong bullish reversal
+                - **Bearish Engulfing:** Strong bearish reversal
+                - **Hammer:** Bullish reversal at support
+                - **Shooting Star:** Bearish reversal at resistance
+                - **Doji:** Indecision, potential reversal
+                - **Morning Star:** Strong bullish reversal (3-candle)
+                - **Evening Star:** Strong bearish reversal (3-candle)
+                """)
+            else:
+                st.info("No candlestick patterns detected")
+        
+        with pattern_col2:
+            st.markdown("### 📈 Chart Patterns")
+            
+            chart_patterns = tech_indicators.get('chart_patterns', [])
+            
+            if chart_patterns:
+                st.caption(f"**Found {len(chart_patterns)} patterns**")
+                
+                for pattern in chart_patterns[-10:]:  # Show last 10
+                    signal_emoji = {
+                        'BULLISH': '🟢',
+                        'BEARISH': '🔴',
+                        'NEUTRAL': '🟡'
+                    }.get(pattern['signal'], '⚪')
+                    
+                    with st.expander(f"{signal_emoji} {pattern['pattern']} - {pattern['confidence']}%"):
+                        st.caption(f"**Signal:** {pattern['signal']}")
+                        st.caption(f"**Confidence:** {pattern['confidence']}%")
+                        st.caption(f"**Time:** {pattern['timestamp']}")
+                        
+                        if 'resistance' in pattern:
+                            st.caption(f"**Resistance:** {format_price(pattern['resistance'])}")
+                        if 'support' in pattern:
+                            st.caption(f"**Support:** {format_price(pattern['support'])}")
+                        if 'neckline' in pattern:
+                            st.caption(f"**Neckline:** {format_price(pattern['neckline'])}")
+                        
+                        st.progress(pattern['confidence'] / 100)
+                
+                st.markdown("""
+                **Common Chart Patterns:**
+                - **Double Top:** Bearish reversal at resistance
+                - **Double Bottom:** Bullish reversal at support
+                - **Head & Shoulders:** Strong bearish reversal
+                - **Inverse H&S:** Strong bullish reversal
+                - **Triangle:** Continuation pattern, breakout expected
+                """)
+            else:
+                st.info("No chart patterns detected")
+    else:
+        st.info("No pattern data available")
+
+with tab6:
     st.subheader("🤖 GPT-4 Analysis")
     
     llm_analysis = cache.get('llm_analysis', {})
@@ -242,6 +409,34 @@ with tab4:
         
         st.divider()
         
+        # NEW: Additional LLM insights
+        st.markdown("#### 🎯 Multi-Indicator Confluence")
+        
+        conf_col1, conf_col2, conf_col3 = st.columns(3)
+        
+        with conf_col1:
+            rsi_impact = llm_analysis.get('rsi_impact', 'neutral')
+            st.metric("RSI Impact", rsi_impact)
+        
+        with conf_col2:
+            bb_impact = llm_analysis.get('bb_impact', 'neutral')
+            st.metric("BB Impact", bb_impact)
+        
+        with conf_col3:
+            pattern_conf = llm_analysis.get('pattern_confluence', 'weak')
+            st.metric("Pattern Confluence", pattern_conf)
+        
+        st.divider()
+        
+        # Entry Signals
+        st.markdown("#### 🎯 Entry Signals")
+        entry_signals = llm_analysis.get('entry_signals', [])
+        if entry_signals:
+            for signal in entry_signals:
+                st.info(f"✅ {signal}")
+        
+        st.divider()
+        
         # Analysis Summary
         st.markdown("#### 📝 Analysis Summary")
         summary = llm_analysis.get('analysis_summary', 'No summary available')
@@ -268,6 +463,10 @@ with tab4:
 
 # Refresh button
 st.divider()
-if st.button("🔄 Refresh Analysis", use_container_width=True):
+if st.button("🔄 Refresh Analysis", width="stretch"):
     st.rerun()
+
+# Footer
+st.markdown("---")
+st.caption("🧙‍♂️ Trade Yoda - Powered by NeuralVectors Technologies LLP")
 

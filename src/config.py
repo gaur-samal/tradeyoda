@@ -40,23 +40,43 @@ class Config:
     MIN_PROBABILITY_THRESHOLD: float = float(os.getenv("MIN_PROBABILITY_THRESHOLD", "80.0"))
     
     # Order Execution Settings
-    ORDER_QUANTITY = 50  # Number of lots/units per trade
+    ORDER_QUANTITY = 1  # Number of lots/units per trade
     USE_SUPER_ORDER = True  # True = Super Order, False = Bracket Order
+    NO_TRADES_ON_EXPIRY = True  # Block trades on expiry day
 
     # Timeframes
     ZONE_TIMEFRAME: int = int(os.getenv("ZONE_TIMEFRAME", "15"))
     TRADE_TIMEFRAME: int = int(os.getenv("TRADE_TIMEFRAME", "3"))
     
-    # Nifty Configuration
-    NIFTY_SECURITY_ID: str = os.getenv("NIFTY_SECURITY_ID", "13")
-    NIFTY_EXCHANGE: str = os.getenv("NIFTY_EXCHANGE", "IDX_I")
+    # Nifty Configuration - FUTURES BASED
+    # For analysis: Use Nifty Futures
+    NIFTY_FUTURES_SECURITY_ID: str = os.getenv("NIFTY_FUTURES_SECURITY_ID", "52168")  # Update with actual futures security ID
+    NIFTY_FUTURES_EXCHANGE: str = "NSE_FNO"
+    ANALYSIS_INSTRUMENT_TYPE: str = "FUTIDX"  # Futures Index
+    
+    # For option chain: Use Nifty Index (underlying)
+    NIFTY_INDEX_SECURITY_ID: str = "13"
+    NIFTY_INDEX_EXCHANGE: str = "IDX_I"
     NIFTY_SYMBOL: str = "NIFTY 50"
     
-    # Technical Indicators
+    # Technical Indicators - Existing
     VP_SESSIONS: int = int(os.getenv("VP_SESSIONS", "24"))
     VP_VALUE_AREA: float = float(os.getenv("VP_VALUE_AREA", "70"))
     OB_LOOKBACK: int = int(os.getenv("OB_LOOKBACK", "20"))
     FVG_MIN_SIZE: float = float(os.getenv("FVG_MIN_SIZE", "0.001"))
+    
+    # Technical Indicators - NEW
+    RSI_PERIOD: int = int(os.getenv("RSI_PERIOD", "14"))
+    RSI_OVERBOUGHT: float = float(os.getenv("RSI_OVERBOUGHT", "70"))
+    RSI_OVERSOLD: float = float(os.getenv("RSI_OVERSOLD", "30"))
+    
+    BB_PERIOD: int = int(os.getenv("BB_PERIOD", "20"))
+    BB_STD_DEV: float = float(os.getenv("BB_STD_DEV", "2"))
+    
+    # Pattern Detection
+    ENABLE_CANDLESTICK_PATTERNS: bool = True
+    ENABLE_CHART_PATTERNS: bool = True
+    MIN_PATTERN_CONFIDENCE: float = 70.0
     
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -73,6 +93,7 @@ class Config:
     def get_dhan_context(cls):
         """Return a reusable DhanContext object."""
         return DhanContext(cls.DHAN_CLIENT_ID, cls.DHAN_ACCESS_TOKEN)
+    
     @classmethod
     def validate(cls) -> bool:
         """Validate configuration."""

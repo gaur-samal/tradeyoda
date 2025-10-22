@@ -11,13 +11,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils.helpers import format_price, format_percentage
 
-st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Dashboard - Trade Yoda", page_icon="📊", layout="wide")
 
 st.title("📊 Live Trading Dashboard")
 
 # Check if orchestrator exists
 if 'orchestrator' not in st.session_state or st.session_state.orchestrator is None:
-    st.warning("⚠️ Please start the agent from the main page first")
+    st.warning("⚠️ Please start Trade Yoda from the main page first")
     st.stop()
 
 orchestrator = st.session_state.orchestrator
@@ -60,11 +60,11 @@ st.divider()
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("📈 Nifty 50 - Live Price")
+    st.subheader("📈 Nifty 50 Futures - Live Price")
     
-    # Get live quote
+    # Get live quote from Futures
     if orchestrator.data_agent.latest_data:
-        nifty_data = orchestrator.data_agent.get_live_quote(orchestrator.config.NIFTY_SECURITY_ID)
+        nifty_data = orchestrator.data_agent.latest_data.get(str(orchestrator.config.NIFTY_FUTURES_SECURITY_ID), {})
         
         if nifty_data:
             price_col1, price_col2, price_col3, price_col4 = st.columns(4)
@@ -91,7 +91,7 @@ with col1:
             st.caption(f"Volume: {volume:,}")
             st.progress(min(volume / 10000000, 1.0))
         else:
-            st.info("Waiting for live data...")
+            st.info("Waiting for live futures data...")
     else:
         st.info("📡 Connecting to market feed...")
 
@@ -115,6 +115,15 @@ with col2:
         trend = context.get('trend', 'N/A')
         st.caption(f"**Trend:** {trend}")
         
+        # NEW: Show RSI and BB Position
+        rsi = context.get('rsi')
+        if rsi:
+            st.caption(f"**RSI:** {rsi:.2f} ({context.get('rsi_signal', 'N/A')})")
+        
+        bb_pos = context.get('bb_position')
+        if bb_pos:
+            st.caption(f"**BB Position:** {bb_pos}")
+        
         timestamp = cache.get('timestamp')
         if timestamp:
             age = (datetime.now() - timestamp).seconds
@@ -123,6 +132,81 @@ with col2:
         st.info("Run analysis to see market bias")
 
 st.divider()
+
+# NEW: Technical Indicators Section
+if orchestrator.analysis_cache:
+    tech_indicators = orchestrator.analysis_cache.get('technical_indicators', {})
+    
+    if tech_indicators:
+        st.subheader("📊 Technical Indicators")
+        
+        ind_col1, ind_col2, ind_col3, ind_col4 = st.columns(4)
+        
+        with ind_col1:
+            rsi = tech_indicators.get('latest_rsi')
+            rsi_signal = tech_indicators.get('rsi_signal', 'NEUTRAL')
+            if rsi:
+                st.metric("RSI (14)", f"{rsi:.2f}")
+                st.caption(f"Signal: {rsi_signal}")
+                
+                # RSI gauge
+                if rsi > 70:
+                    st.error("⚠️ Overbought")
+                elif rsi < 30:
+                    st.success("✅ Oversold")
+                else:
+                    st.info("📊 Neutral")
+        
+        with ind_col2:
+            bb_position = tech_indicators.get('bb_position', 'N/A')
+            st.metric("Bollinger Bands", bb_position)
+            
+            if bb_position == 'ABOVE_UPPER':
+                st.warning("Price above upper band")
+            elif bb_position == 'BELOW_LOWER':
+                st.success("Price below lower band")
+            else:
+                st.info("Price within bands")
+        
+        with ind_col3:
+            candle_patterns = tech_indicators.get('candlestick_patterns', [])
+            st.metric("Candlestick Patterns", len(candle_patterns))
+            
+            if candle_patterns:
+                latest = candle_patterns[-1]
+                st.caption(f"Latest: {latest['pattern']}")
+                st.caption(f"Signal: {latest['signal']}")
+        
+        with ind_col4:
+            chart_patterns = tech_indicators.get('chart_patterns', [])
+            st.metric("Chart Patterns", len(chart_patterns))
+            
+            if chart_patterns:
+                latest = chart_patterns[-1]
+                st.caption(f"Latest: {latest['pattern']}")
+                st.caption(f"Signal: {latest['signal']}")
+        
+        st.divider()
+        
+        # Pattern Details
+        if candle_patterns or chart_patterns:
+            pattern_col1, pattern_col2 = st.columns(2)
+            
+            with pattern_col1:
+                if candle_patterns:
+                    st.markdown("#### 🕯️ Recent Candlestick Patterns")
+                    for pattern in candle_patterns[-3:]:
+                        signal_emoji = {'BULLISH': '🟢', 'BEARISH': '🔴', 'NEUTRAL': '🟡'}.get(pattern['signal'], '⚪')
+                        st.caption(f"{signal_emoji} **{pattern['pattern']}** - Confidence: {pattern['confidence']}%")
+            
+            with pattern_col2:
+                if chart_patterns:
+                    st.markdown("#### 📈 Recent Chart Patterns")
+                    for pattern in chart_patterns[-3:]:
+                        signal_emoji = {'BULLISH': '🟢', 'BEARISH': '🔴', 'NEUTRAL': '🟡'}.get(pattern['signal'], '⚪')
+                        st.caption(f"{signal_emoji} **{pattern['pattern']}** - Confidence: {pattern['confidence']}%")
+        
+        st.divider()
 
 # Supply/Demand Zones Visualization
 st.subheader("🎯 Supply & Demand Zones")
@@ -202,9 +286,13 @@ if orchestrator.analysis_cache:
         hvn = vp_data.get('high_volume_nodes', [])
         if hvn:
             hvn_df = pd.DataFrame(hvn, columns=['Price', 'Volume'])
-            st.dataframe(hvn_df, use_container_width=True)
+            st.dataframe(hvn_df, width="stretch")
 
 # Refresh button
-if st.button("🔄 Refresh Dashboard", use_container_width=True):
+if st.button("🔄 Refresh Dashboard", width="stretch"):
     st.rerun()
+
+# Footer
+st.markdown("---")
+st.caption("🧙‍♂️ Trade Yoda - Powered by NeuralVectors Technologies LLP")
 

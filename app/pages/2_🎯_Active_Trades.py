@@ -9,13 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils.helpers import format_price, format_percentage
 
-st.set_page_config(page_title="Active Trades", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Active Trades - Trade Yoda", page_icon="🎯", layout="wide")
 
 st.title("🎯 Active Trades Monitor")
 
 # Check orchestrator
 if 'orchestrator' not in st.session_state or st.session_state.orchestrator is None:
-    st.warning("⚠️ Please start the agent from the main page first")
+    st.warning("⚠️ Please start Trade Yoda from the main page first")
     st.stop()
 
 # Filters
@@ -115,7 +115,7 @@ if filtered_trades:
             pass
         return ''
     
-    st.dataframe(df, use_container_width=True, height=400)
+    st.dataframe(df, width="stretch", height=400)
     
     st.divider()
     
@@ -175,6 +175,7 @@ if filtered_trades:
                     st.caption(f"Risk-Reward: {trade.get('risk_reward', 0):.2f}")
                     st.caption(f"Probability: {trade.get('probability', 0):.0f}%")
                     st.caption(f"Confidence: {trade.get('confidence', 0):.0f}%")
+                    st.caption(f"Confluence: {trade.get('confluence_count', 0)} indicators")
                 
                 with detail_col2:
                     st.markdown("**LLM Analysis:**")
@@ -199,4 +200,8 @@ if filtered_trades:
             file_name=f"trades_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
+
+# Footer
+st.markdown("---")
+st.caption("🧙‍♂️ Trade Yoda - Powered by NeuralVectors Technologies LLP")
 
