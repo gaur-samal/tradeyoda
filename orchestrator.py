@@ -41,7 +41,7 @@ class TradingOrchestrator:
         self.active_trades = []
         self.analysis_cache = {}
         self.is_running = False
-
+        self.monitoring_task = None
         log.info("🤖 Trading Orchestrator initialized")
 
     def start(self):
@@ -350,6 +350,40 @@ class TradingOrchestrator:
 
     def get_active_trades(self) -> list:
         return self.active_trades
+    async def run_continuous_monitoring(self):
+        """Run continuous monitoring loop."""
+        log.info("🔄 Starting continuous monitoring...")
+        
+        last_zone_analysis = datetime.now() - timedelta(minutes=15)
+        last_trade_check = datetime.now() - timedelta(minutes=3)
+        
+        while self.is_running:
+            try:
+                current_time = datetime.now()
+                
+                # Run zone analysis every 15 minutes
+                if (current_time - last_zone_analysis).seconds >= 900:  # 15 minutes
+                    log.info("🔍 Running scheduled zone analysis...")
+                    await self.run_zone_identification_cycle()
+                    last_zone_analysis = current_time
+                
+                # Run trade identification every 3 minutes
+                if (current_time - last_trade_check).seconds >= 180:  # 3 minutes
+                    log.info("🎯 Running scheduled trade identification...")
+                    await self.run_trade_identification_cycle()
+                    last_trade_check = current_time
+                
+                # Sleep for 30 seconds before next iteration
+                await asyncio.sleep(30)
+                
+            except asyncio.CancelledError:
+                log.info("⚠️ Continuous monitoring cancelled")
+                break
+            except Exception as e:
+                log.error(f"❌ Error in continuous monitoring: {e}")
+                await asyncio.sleep(60)  # Wait longer on error
+        
+        log.info("✅ Continuous monitoring stopped")
 
     def shutdown(self):
         log.info("🛑 Shutting down trading system …")

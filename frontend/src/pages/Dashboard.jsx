@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Play, Square, Activity, TrendingUp, Zap, BarChart, Pause } from 'lucide-react'
+import toast, { Toaster } from 'react-hot-toast'
 import useStore from '../store/useStore'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { 
@@ -51,6 +52,7 @@ export default function Dashboard() {
       setIsRunning(data.running)
     } catch (error) {
       console.error('Failed to fetch status:', error)
+      toast.error('Failed to fetch system status')
     }
   }
   
@@ -77,9 +79,10 @@ export default function Dashboard() {
     try {
       await startTrading()
       setIsRunning(true)
+      toast.success('🚀 Trade Yoda activated!', { duration: 3000 })
     } catch (error) {
       console.error('Failed to start:', error)
-      alert('Failed to start system')
+      toast.error('Failed to start system: ' + (error.response?.data?.error || error.message))
     } finally {
       setLoading(false)
     }
@@ -95,9 +98,10 @@ export default function Dashboard() {
       }
       await stopTrading()
       setIsRunning(false)
+      toast.success('⏹️ Trade Yoda stopped', { duration: 3000 })
     } catch (error) {
       console.error('Failed to stop:', error)
-      alert('Failed to stop system')
+      toast.error('Failed to stop system: ' + (error.response?.data?.error || error.message))
     } finally {
       setLoading(false)
     }
@@ -105,17 +109,22 @@ export default function Dashboard() {
   
   const handleStartContinuous = async () => {
     setLoading(true)
+    const loadingToast = toast.loading('Activating continuous auto-trading...')
+    
     try {
       await startContinuousMonitoring()
       setContinuousMode(true)
-      alert('✅ Continuous auto-trading activated!\n\n' +
-            '• Zone analysis every 15 minutes\n' +
-            '• Trade identification every 3 minutes\n' +
-            '• Auto-exit at 3:25 PM\n' +
-            '• No new trades after 3:00 PM')
+      toast.success(
+        '🤖 Continuous auto-trading activated!\n\n' +
+        '• Zone analysis every 15 minutes\n' +
+        '• Trade identification every 3 minutes\n' +
+        '• Auto-exit at 3:25 PM\n' +
+        '• No new trades after 3:00 PM',
+        { duration: 6000, id: loadingToast }
+      )
     } catch (error) {
       console.error('Failed to start continuous monitoring:', error)
-      alert('❌ Failed to start auto-trading')
+      toast.error('Failed to start auto-trading: ' + (error.response?.data?.error || error.message), { id: loadingToast })
     } finally {
       setLoading(false)
     }
@@ -123,13 +132,15 @@ export default function Dashboard() {
   
   const handleStopContinuous = async () => {
     setLoading(true)
+    const loadingToast = toast.loading('Stopping continuous auto-trading...')
+    
     try {
       await stopContinuousMonitoring()
       setContinuousMode(false)
-      alert('⚠️ Continuous auto-trading stopped.\n\nManual mode activated.')
+      toast.success('⏸️ Continuous auto-trading stopped.\n\nManual mode activated.', { duration: 4000, id: loadingToast })
     } catch (error) {
       console.error('Failed to stop continuous monitoring:', error)
-      alert('❌ Failed to stop auto-trading')
+      toast.error('Failed to stop auto-trading: ' + (error.response?.data?.error || error.message), { id: loadingToast })
     } finally {
       setLoading(false)
     }
@@ -137,40 +148,132 @@ export default function Dashboard() {
   
   const handleZoneAnalysis = async () => {
     setAnalysisLoading(true)
+    const loadingToast = toast.loading('Running zone analysis...')
+    
     try {
-      await runZoneAnalysis()
-      alert('✅ Zone analysis complete!')
-      fetchStatistics()
+        const { data } = await runZoneAnalysis()
+        
+        if (data.success) {
+        const demandCount = data.data?.zones?.demand_zones?.length || 0
+        const supplyCount = data.data?.zones?.supply_zones?.length || 0
+        
+        toast.success(
+            `✅ Zone analysis complete!\n\nFound:\n• ${demandCount} demand zones\n• ${supplyCount} supply zones`,
+            { duration: 5000, id: loadingToast }
+        )
+        fetchStatistics()
+        } else {
+        // Use regular toast with custom style for info
+        toast(data.message || 'No zones identified', { 
+            id: loadingToast,
+            icon: 'ℹ️',
+            duration: 5000,
+            style: {
+            background: '#1f2937',
+            border: '1px solid #3b82f6',
+            color: '#fff',
+            }
+        })
+        }
     } catch (error) {
-      console.error('Failed to run analysis:', error)
-      alert('❌ Analysis failed')
+        console.error('Failed to run analysis:', error)
+        
+        const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
+        
+        if (errorMsg.includes('market hours') || errorMsg.includes('Outside market')) {
+        toast.error(
+            '⏰ Outside Market Hours\n\nZone analysis can only run during:\n• Monday to Friday\n• 9:15 AM to 3:30 PM IST\n\nPlease try again during trading hours.',
+            { duration: 6000, id: loadingToast }
+        )
+        } else {
+        toast.error('Analysis failed: ' + errorMsg, { id: loadingToast })
+        }
     } finally {
-      setAnalysisLoading(false)
+        setAnalysisLoading(false)
     }
-  }
-  
+  } 
   const handleTradeIdentification = async () => {
     setTradeLoading(true)
+    const loadingToast = toast.loading('Identifying trade opportunities...')
+    
     try {
-      const { data } = await runTradeIdentification()
-      if (data.success) {
-        alert('✅ Trade identified!')
+        const { data } = await runTradeIdentification()
+        
+        if (data.success) {
+        toast.success(
+            '✅ Trade identified and executed!\n\nCheck the Trades page for details.',
+            { duration: 5000, id: loadingToast }
+        )
         fetchStatistics()
-      } else {
-        alert('ℹ️ No trade opportunities found')
-      }
+        } else {
+        // Use regular toast with custom style for info
+        toast(data.message || 'No trade opportunities found at this time.', { 
+            id: loadingToast,
+            icon: 'ℹ️',
+            duration: 5000,
+            style: {
+            background: '#1f2937',
+            border: '1px solid #3b82f6',
+            color: '#fff',
+            }
+        })
+        }
     } catch (error) {
-      console.error('Failed to identify trade:', error)
-      alert('❌ Trade identification failed')
+        console.error('Failed to identify trade:', error)
+        
+        const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
+        
+        if (errorMsg.includes('market hours') || errorMsg.includes('Outside market')) {
+        toast.error(
+            '⏰ Outside Market Hours\n\nTrade identification can only run during:\n• Monday to Friday\n• 9:15 AM to 3:30 PM IST\n\nPlease try again during trading hours.',
+            { duration: 6000, id: loadingToast }
+        )
+        } else {
+        toast.error('Trade identification failed: ' + errorMsg, { id: loadingToast })
+        }
     } finally {
-      setTradeLoading(false)
+        setTradeLoading(false)
     }
   }
-  
+ 
   const activeTrades = trades.filter(t => t.status === 'ACTIVE').length
   
   return (
     <div className="space-y-6">
+      {/* Toast Container */}
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#1f2937',
+            color: '#fff',
+            border: '1px solid #374151',
+            borderRadius: '12px',
+            padding: '16px',
+            maxWidth: '500px',
+          },
+          success: {
+            style: {
+              background: '#1f2937',
+              border: '1px solid #10b981',
+            },
+          },
+          error: {
+            style: {
+              background: '#1f2937',
+              border: '1px solid #ef4444',
+            },
+          },
+          loading: {
+            style: {
+              background: '#1f2937',
+              border: '1px solid #8b5cf6',
+            },
+          },
+        }}
+      />
+
       {/* Control Panel */}
       <div className="card p-6">
         <div className="flex items-center justify-between">

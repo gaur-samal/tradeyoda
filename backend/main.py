@@ -256,32 +256,34 @@ async def stop_continuous_monitoring():
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== ANALYSIS ENDPOINTS ====================
-
 @app.post("/api/run-zone-analysis")
 async def run_zone_analysis():
-    """Run 15-minute zone identification cycle."""
+    """Run zone analysis."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
     
     try:
-        log.info("🔍 Running zone analysis via API...")
+        log.info(f"🔍 Running zone analysis")
         result = await orchestrator.run_zone_identification_cycle()
         
         if result:
-            # Clean result before broadcasting and returning
             result = clean_json_data(result)
             
-            # Notify WebSocket clients
             await broadcast_message({
                 "type": "zone_analysis_complete",
                 "data": result
             })
             return {"success": True, "data": result}
         else:
-            return {"success": False, "message": "No zones identified"}
+            # Better message when no result
+            return {
+                "success": False, 
+                "message": "Zone analysis could not be completed. Check if market is open (9:15 AM - 3:30 PM IST, Mon-Fri)"
+            }
     except Exception as e:
         log.error(f"Zone analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/run-trade-identification")
 async def run_trade_identification():
