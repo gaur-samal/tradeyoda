@@ -1,13 +1,18 @@
 import axios from 'axios'
 
-const API_BASE_URL = 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
 })
+
+// Dhan credentials endpoints
+export const getDhanCredentials = () => api.get('/api/dhan/credentials')
+export const updateDhanCredentials = (credentials) => api.post('/api/dhan/credentials', credentials)
+export const testDhanConnection = () => api.post('/api/dhan/test')
 
 // System endpoints
 export const getStatus = () => api.get('/api/status')

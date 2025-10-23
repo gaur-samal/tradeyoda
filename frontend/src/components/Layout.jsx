@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom'
-import { Activity, BarChart3, TrendingUp, Settings, HelpCircle } from 'lucide-react'
+import { Activity, BarChart3, TrendingUp, Settings, HelpCircle, Key } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useState } from 'react'
 
@@ -10,6 +10,7 @@ export default function Layout() {
     { path: '/', icon: Activity, label: 'Dashboard' },
     { path: '/analysis', icon: BarChart3, label: 'Analysis' },
     { path: '/trades', icon: TrendingUp, label: 'Trades' },
+    { path: '/dhan-setup', icon: Key, label: 'Dhan Setup' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ]
   

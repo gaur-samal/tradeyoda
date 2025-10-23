@@ -96,7 +96,7 @@ app = FastAPI(
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_origins=["*"],  # React dev servers
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -556,6 +556,87 @@ async def update_config(updates: dict):
     except Exception as e:
         log.error(f"Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== DHAN CREDENTIALS ====================
+
+@app.get("/api/dhan/credentials")
+async def get_dhan_credentials():
+    """Get Dhan credentials status (masked)."""
+    return {
+        "client_id": config.DHAN_CLIENT_ID[:4] + "****" if config.DHAN_CLIENT_ID else None,
+        "access_token": "****" + config.DHAN_ACCESS_TOKEN[-4:] if config.DHAN_ACCESS_TOKEN else None,
+        "configured": bool(config.DHAN_CLIENT_ID and config.DHAN_ACCESS_TOKEN)
+    }
+
+@app.post("/api/dhan/credentials")
+async def update_dhan_credentials(credentials: dict):
+    """Update Dhan credentials."""
+    try:
+        client_id = credentials.get("client_id", "").strip()
+        access_token = credentials.get("access_token", "").strip()
+
+        if not client_id or not access_token:
+            raise HTTPException(status_code=400, detail="Both Client ID and Access Token are required")
+
+        # Update config
+        config.DHAN_CLIENT_ID = client_id
+        config.DHAN_ACCESS_TOKEN = access_token
+
+        # Update orchestrator's dhan_context
+        if orchestrator:
+            orchestrator.dhan_context = config.get_dhan_context()
+            orchestrator.data_agent.dhan_context = config.get_dhan_context()
+            orchestrator.execution_agent.dhan_context = config.get_dhan_context()
+
+            # Reinitialize dhan instances
+            from dhanhq import dhanhq
+            orchestrator.data_agent.dhan = dhanhq(orchestrator.dhan_context)
+            orchestrator.execution_agent.dhan = dhanhq(orchestrator.dhan_context)
+
+            log.info("✅ Dhan credentials updated successfully")
+
+        return {
+            "success": True,
+            "message": "Dhan credentials updated successfully",
+            "configured": True
+        }
+
+    except Exception as e:
+        log.error(f"Failed to update Dhan credentials: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/dhan/test")
+async def test_dhan_connection():
+    """Test Dhan API connection."""
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+        # Try to fetch a simple quote
+        from dhanhq import dhanhq
+        dhan = dhanhq(config.DHAN_CLIENT_ID, config.DHAN_ACCESS_TOKEN)
+
+        # Test with Nifty index
+        result = dhan.ticker_data(securities={"IDX_I": [13]})
+
+        if result and result.get("status") == "success":
+            return {
+                "success": True,
+                "message": "Connection successful! Dhan API is working."
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Connection failed. Please check your credentials."
+            }
+
+    except Exception as e:
+        log.error(f"Dhan connection test failed: {e}")
+        return {
+            "success": False,
+            "message": f"Connection failed: {str(e)}"
+        }
+
 
 # ==================== WEBSOCKET ENDPOINT ====================
 

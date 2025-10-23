@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react'
 import useStore from '../store/useStore'
 
-const WS_URL = 'ws://localhost:8000/ws'
+const WS_URL = import.meta.env.VITE_API_URL 
+  ? import.meta.env.VITE_API_URL.replace('http', 'ws') + '/ws'
+  : 'ws://localhost:8000/ws'
+
 
 export const useWebSocket = () => {
   const wsRef = useRef(null)
