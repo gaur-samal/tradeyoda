@@ -5,17 +5,39 @@ import pandas as pd
 
 
 def get_nearest_expiry(base_date: datetime = None) -> str:
-    """Get nearest Thursday expiry for Nifty options."""
-    if base_date is None:
-        base_date = datetime.now()
-    
-    days_ahead = 3 - base_date.weekday()  # Thursday = 3
-    if days_ahead <= 0:
-        days_ahead += 7
-    
-    next_thursday = base_date + timedelta(days=days_ahead)
-    return next_thursday.strftime("%Y-%m-%d")
+        """
+        Get nearest Tuesday expiry for Nifty options.
+        
+        Note: Nifty weekly options now expire on Tuesdays (changed from Thursday).
+        
+        Args:
+            base_date: Base date to calculate from (default: current date)
+        
+        Returns:
+            Expiry date in YYYY-MM-DD format
+        """
+        if base_date is None:
+            base_date = datetime.now()
 
+        # Tuesday = 1 (Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4)
+        days_ahead = 1 - base_date.weekday()
+        
+        # If today is Tuesday and it's before 3:30 PM, use today
+        # Otherwise, get next Tuesday
+        if days_ahead == 0:
+            # It's Tuesday today
+            if base_date.hour < 15 or (base_date.hour == 15 and base_date.minute < 30):
+                # Before expiry time, use today
+                return base_date.strftime("%Y-%m-%d")
+            else:
+                # After expiry time, get next Tuesday
+                days_ahead = 7
+        elif days_ahead < 0:
+            # If we're past Tuesday this week, get next Tuesday
+            days_ahead += 7
+
+        next_tuesday = base_date + timedelta(days=days_ahead)
+        return next_tuesday.strftime("%Y-%m-%d")
 
 def calculate_position_size(
     capital: float,

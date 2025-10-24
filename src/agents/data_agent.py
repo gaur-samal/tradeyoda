@@ -44,52 +44,102 @@ class DataCollectionAgent:
                 instruments,
                 version="v2"
             )
-            
-            # Set event handlers
-            self.market_feed.on_connect = lambda _: log.info("Market feed connected")
-            self.market_feed.on_message = self._on_message
-            
-            # Start background thread
-            t = threading.Thread(
-                target=self.market_feed.run_forever, name="MarketFeedWorker", daemon=True
+            # Start background thread with the correct pattern
+            feed_thread = threading.Thread(
+                target=self._market_feed_loop,
+                name="MarketFeedWorker",
+                daemon=True
             )
-            t.start()
-            
+            feed_thread.start()
+
             self.is_running = True
-            log.info(f"✅ Subscribed {len(instruments)} instruments")
+            log.info(f"✅ Market feed started successfully")
             return True
+
         except Exception as e:
             log.error(f"❌ Feed start error: {str(e)}")
+            import traceback
+            log.error(traceback.format_exc())
             return False
-   
-    def stop_live_feed(self):
-        """
-        Stop the live market feed and disconnect WebSocket gracefully.
-        """
+
+    def _market_feed_loop(self):
+        """Background thread for market feed using asyncio.run()."""
+        log.info("🔌 Market feed thread started")
+        
+        import asyncio
+        
+        async def feed_worker():
+            """Async worker that handles the feed."""
+            while self.is_running:
+                try:
+                    # Connect
+                    await self.market_feed.connect()
+                    
+                    # Get data
+                    response = await self.market_feed.get_data()
+                    print(f"market_feed_data response : {response}") 
+                    if response:
+                        self._process_market_data(response)
+                        
+                except Exception as e:
+                    if self.is_running:
+                        log.error(f"❌ Feed error: {e}")
+                        await asyncio.sleep(2)
+                    else:
+                        break
+        
         try:
-            if not self.is_running:
-                log.warning("⚠️ Market feed not running")
-                return True
+            # Run the async worker in this thread
+            asyncio.run(feed_worker())
+        except Exception as e:
+            log.error(f"❌ Market feed thread error: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+        finally:
+            log.info("✅ Market feed thread stopped")
 
-            if self.market_feed:
-                # Disconnect the WebSocket connection
-                self.market_feed.disconnect()
-                log.info("✅ MarketFeed WebSocket disconnected")
 
-            # Update state
-            self.is_running = False
-            self.market_feed = None
+    def _process_market_data(self, data):
+        """Process incoming market data."""
+        try:
+            if not data or not isinstance(data, dict):
+                return
 
-            log.info("✅ Market feed stopped successfully")
-            return True
+            # Extract security_id from response
+            security_id = str(data.get("security_id", ""))
+
+            if security_id:
+                # Add timestamp
+                data["received_at"] = datetime.now()
+
+                # Store in latest_data cache
+                self.latest_data[security_id] = data
+
+                # Put in queue for processing
+                self.live_data_queue.put(data)
+
+                # Log first few updates
+                if not hasattr(self, '_log_count'):
+                    self._log_count = {}
+
+                count = self._log_count.get(security_id, 0)
+                if count < 5:  # Log first 5 messages
+                    log.info(f"📊 Market data [{security_id}]: Type={data.get('type')}, LTP={data.get('LTP', 'N/A')}")
+                    self._log_count[security_id] = count + 1
 
         except Exception as e:
-            log.error(f"❌ Error stopping market feed: {str(e)}")
-            # Force state update even if disconnect fails
+            log.error(f"Error processing market data: {e}")
+
+    def stop_live_feed(self):
+        """Stop market feed."""
+        try:
             self.is_running = False
-            self.market_feed = None
-            return False
-   
+            if hasattr(self, 'market_feed') and self.market_feed:
+                self.market_feed.close_connection()
+            log.info("✅ Market feed stopped")
+        except Exception as e:
+            log.error(f"Error stopping market feed: {e}") 
+    
     def _on_message(self, instance, message):
         """Handle incoming WebSocket tick messages."""
         if not message or not isinstance(message, dict):
@@ -126,7 +176,7 @@ class DataCollectionAgent:
                 "to_date": to_date,
             }
             result = self.dhan.intraday_minute_data(**params)
-            #print(result)
+            #log.info(f"intraday_minute_data : {result}")
             if not result or result.get("status") != "success":
                 return pd.DataFrame()
             
@@ -138,50 +188,136 @@ class DataCollectionAgent:
         except Exception as e:
             log.error(f"❌ Historical fetch error: {str(e)}")
             return pd.DataFrame()
-    def fetch_option_chain(self, security_id, exchange_segment, expiry_date):
-        """
-        Fetch option chain using correct SDK method.
-        Throttled by 3 secs to comply with API limits.
-        """
-        try:
-            time.sleep(3)
-            chain = self.dhan.option_chain(
-                under_security_id=security_id,
-                under_exchange_segment=exchange_segment,
-                expiry=expiry_date
-            )
-            if chain and chain.get("status") == "success":
-                return pd.DataFrame(chain["data"])
-            return pd.DataFrame()
-        except Exception as e:
-            log.error(f"❌ Option chain fetch error: {str(e)}")
-            return pd.DataFrame()
     
-    def fetch_market_quotes(self, securities, exchange_segment="IDX_I"):
+    def fetch_option_chain(self, security_id, exchange_segment, expiry_date, max_retries=3):
         """
-        Fetch market quote data using SDK's quote_data method.
+        Fetch option chain with proper data transformation.
+        """
+        for attempt in range(max_retries):
+            try:
+                time.sleep(3)
+                
+                log.info(f"Fetching option chain (attempt {attempt + 1}/{max_retries})")
+                log.info(f"  Security: {security_id}, Exchange: {exchange_segment}, Expiry: {expiry_date}")
+                
+                chain = self.dhan.option_chain(
+                    under_security_id=int(security_id),
+                    under_exchange_segment=exchange_segment,
+                    expiry=str(expiry_date)
+                )
+                
+                if chain and chain.get("status") == "success":
+                    # Extract nested data structure
+                    # Structure: {'data': {'data': {'last_price': X, 'oc': {strike: {ce/pe data}}}}}
+                    outer_data = chain.get("data", {})
+                    inner_data = outer_data.get("data", {})
+                    option_chain_data = inner_data.get("oc", {})
+                    spot_price = inner_data.get("last_price", 0)
+                    
+                    if not option_chain_data:
+                        log.warning("Empty option chain in response")
+                        return pd.DataFrame()
+                    
+                    # Transform nested dict to flat DataFrame
+                    rows = []
+                    for strike_str, strike_data in option_chain_data.items():
+                        strike = float(strike_str)
+                        
+                        ce_data = strike_data.get("ce", {})
+                        pe_data = strike_data.get("pe", {})
+                        
+                        row = {
+                            'strike': strike,
+                            # Call data
+                            'call_oi': ce_data.get('oi', 0),
+                            'call_volume': ce_data.get('volume', 0),
+                            'call_iv': ce_data.get('implied_volatility', 0),
+                            'call_ltp': ce_data.get('last_price', 0),
+                            'call_oi_change': ce_data.get('oi', 0) - ce_data.get('previous_oi', 0),
+                            # Put data
+                            'put_oi': pe_data.get('oi', 0),
+                            'put_volume': pe_data.get('volume', 0),
+                            'put_iv': pe_data.get('implied_volatility', 0),
+                            'put_ltp': pe_data.get('last_price', 0),
+                            'put_oi_change': pe_data.get('oi', 0) - pe_data.get('previous_oi', 0),
+                        }
+                        rows.append(row)
+                    
+                    df = pd.DataFrame(rows)
+                    df = df.sort_values('strike')
+                    
+                    log.info(f"✅ Processed {len(df)} strikes from option chain")
+                    log.info(f"   Spot price: {spot_price}")
+                    log.info(f"   Strike range: {df['strike'].min()} to {df['strike'].max()}")
+                    
+                    return df
+                else:
+                    remarks = chain.get("remarks", {})
+                    log.error(f"API returned failure: {remarks}")
+                    return pd.DataFrame()
+                    
+            except Exception as e:
+                log.error(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(5)
+                    continue
+                else:
+                    import traceback
+                    log.error(traceback.format_exc())
+                    return pd.DataFrame()
+        
+        return pd.DataFrame()
+
+
+    def fetch_market_quotes(self, securities, exchange_segment="NSE_FNO"):
+        """
+        Fetch market quote data using SDK's ticker_data method.
         
         Args:
-            securities: List of security IDs
-            exchange_segment: Exchange segment (default: IDX_I for Nifty)
+            securities: List of security IDs (can be strings or ints)
+            exchange_segment: Exchange segment (default: NSE_FNO for Nifty Futures)
+        
+        Returns:
+            Dict with security_id as key and quote data as value
         """
-        # Convert securities to integers if they're strings
-        securities = [int(sec) if isinstance(sec, str) else sec for sec in securities]
         try:
-            print(f"exchange_segment: {exchange_segment}")
-            print(f"securities: {securities}")
-            data = self.dhan.ticker_data(
+            # Convert securities to integers if they're strings
+            securities = [int(sec) if isinstance(sec, str) else sec for sec in securities]
+            
+            log.info(f"Fetching quotes for {exchange_segment}: {securities}")
+            
+            # Call Dhan API
+            response = self.dhan.ticker_data(
                 securities={exchange_segment: securities}
             )
-            print(data)
-            if data and data.get("status") == "success":
-                # Return as dict keyed by security_id for easy lookup
-                quotes = {}
-                for quote in data.get("data", []):
-                    sec_id = str(quote.get("security_id"))
-                    quotes[sec_id] = quote
-                return quotes
-            return {}
+            
+            log.info(f"Raw response: {response}")
+            
+            if not response or response.get("status") != "success":
+                log.error(f"API returned error: {response}")
+                return {}
+            
+            # Extract nested data structure
+            # Response format: {'status': 'success', 'data': {'data': {'NSE_FNO': {'52168': {...}}}}}
+            outer_data = response.get("data", {})
+            inner_data = outer_data.get("data", {})
+            exchange_data = inner_data.get(exchange_segment, {})
+            
+            # Convert to our format: {security_id: {LTP: value, ...}}
+            quotes = {}
+            for sec_id_str, quote_data in exchange_data.items():
+                quotes[sec_id_str] = {
+                    "LTP": quote_data.get("last_price"),
+                    "security_id": sec_id_str,
+                    "exchange_segment": exchange_segment
+                }
+            
+            log.info(f"Processed quotes: {quotes}")
+            return quotes
+            
         except Exception as e:
             log.error(f"Market quote error: {str(e)}")
-            return {}  
+            import traceback
+            log.error(traceback.format_exc())
+            return {}
+

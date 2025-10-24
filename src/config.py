@@ -55,7 +55,7 @@ class Config:
     ANALYSIS_INSTRUMENT_TYPE: str = "FUTIDX"  # Futures Index
     
     # For option chain: Use Nifty Index (underlying)
-    NIFTY_INDEX_SECURITY_ID: str = "13"
+    NIFTY_INDEX_SECURITY_ID: int = 13
     NIFTY_INDEX_EXCHANGE: str = "IDX_I"
     NIFTY_SYMBOL: str = "NIFTY 50"
     

@@ -57,18 +57,43 @@ class TradingOrchestrator:
 
     def _setup_realtime_feeds(self):
         """Initialize live market and order feeds - NOW USING NIFTY FUTURES."""
+        
         # Subscribe to Nifty FUTURES for live data
+        # v2 format: (exchange_segment, security_id_as_string, subscription_type)
         nifty_instruments = [
             (self.config.NIFTY_FUTURES_EXCHANGE, 
              self.config.NIFTY_FUTURES_SECURITY_ID, 
              MarketFeed.Full)
-        ]
-        self.data_agent.start_live_feed(nifty_instruments)
+        ] 
+        success = self.data_agent.start_live_feed(nifty_instruments)
+        
+        if success:
+            log.info("✅ Market feed initialized - waiting for data...")
+            # Give it time to connect
+            import time
+            time.sleep(5)
+            
+            # Check if data is flowing
+            if self.data_agent.latest_data:
+                log.info(f"✅ Market data flowing for: {list(self.data_agent.latest_data.keys())}")
+                # Show sample data
+                for sec_id, data in self.data_agent.latest_data.items():
+                    log.info(f"📊 Sample data [{sec_id}]: {data}")
+            else:
+                log.warning("⚠️ No market data received yet")
+                log.warning("⚠️ Possible reasons:")
+                log.warning("   1. Market is closed (data only flows 9:15 AM - 3:30 PM)")
+                log.warning("   2. No Data API subscription")
+                log.warning("   3. Invalid credentials")
+        else:
+            log.error("❌ Failed to start market feed")
 
+        # Start order updates
         self.execution_agent.start_order_updates(
             on_update_callback=self._handle_order_update
         )
-        log.info("✅ Real‑time feeds initialized (Nifty Futures)")
+        log.info("✅ Real‑time feeds setup complete")
+
 
     def _handle_order_update(self, order_data: dict):
         try:
@@ -120,7 +145,8 @@ class TradingOrchestrator:
                     log.info("⏰ Outside market hours")
                     return None
                 end_date = datetime.now()
-                start_date = end_date - timedelta(days=30)
+                start_date = end_date - timedelta(days=5)
+                log.info("Fetching FUTURES Data")
                 # Fetch FUTURES data instead of index
                 df_15min = self.data_agent.fetch_historical_data(
                     security_id=self.config.NIFTY_FUTURES_SECURITY_ID,
@@ -223,10 +249,17 @@ class TradingOrchestrator:
             print(quotes)
             live_quote = quotes.get(str(self.config.NIFTY_FUTURES_SECURITY_ID), {})
             current_price = live_quote.get("LTP")
-            
-            if not current_price:
-                log.warning("⚠️ No live price")
-                return None
+            # Get live price from MarketFeed (real-time cached data)
+            #futures_id = str(self.config.NIFTY_FUTURES_SECURITY_ID)
+            #live_data = self.data_agent.latest_data.get(futures_id, {})
+            #if not live_data:
+            #    log.warning("⚠️ No live MarketFeed data available - waiting for data")
+            #    return None
+        
+            #current_price = live_data.get('LTP')
+            #if not current_price:
+            #    log.warning("⚠️ No live price")
+            #    return None
 
             zones = self.analysis_cache.get("zones", {})
             trade_opportunity = self._check_zone_proximity(current_price, zones)
@@ -236,6 +269,7 @@ class TradingOrchestrator:
 
             # Fetch option chain using INDEX as underlying (correct for options)
             expiry = get_nearest_expiry()
+            #print(f"expiry : {expiry}")
             option_chain = self.data_agent.fetch_option_chain(
                 self.config.NIFTY_INDEX_SECURITY_ID,  # Use index for options
                 self.config.NIFTY_INDEX_EXCHANGE,
@@ -245,7 +279,7 @@ class TradingOrchestrator:
                 option_chain, current_price, zones
             )
             trade_setup = self.options_agent.select_best_strike(
-                zones, option_analysis, trade_opportunity["direction"]
+                zones, option_analysis, trade_opportunity["direction"], current_price, option_chain
             )
             if not trade_setup:
                 log.info("ℹ️ No valid trade setup")
