@@ -46,8 +46,9 @@ class Config:
 
     # Timeframes
     ZONE_TIMEFRAME: int = int(os.getenv("ZONE_TIMEFRAME", "15"))
-    TRADE_TIMEFRAME: int = int(os.getenv("TRADE_TIMEFRAME", "3"))
-    
+    TRADE_TIMEFRAME: int = int(os.getenv("TRADE_TIMEFRAME", "5"))
+    ZONE_REFRESH_INTERVAL: int = int(os.getenv("ZONE_REFRESH_INTERVAL", "15"))
+
     # Nifty Configuration - FUTURES BASED
     # For analysis: Use Nifty Futures
     NIFTY_FUTURES_SECURITY_ID: str = os.getenv("NIFTY_FUTURES_SECURITY_ID", "52168")  # Update with actual futures security ID

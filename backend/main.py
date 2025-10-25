@@ -424,6 +424,8 @@ async def get_live_price():
 @app.get("/api/config")
 async def get_config():
     """Get current configuration (safe fields only)."""
+    dhan_client_id = config.DHAN_CLIENT_ID
+    dhan_access_token = config.DHAN_ACCESS_TOKEN
     return {
         "use_sandbox": config.USE_SANDBOX,
         "risk_reward_ratio": config.RISK_REWARD_RATIO,
@@ -432,6 +434,11 @@ async def get_config():
         "zone_timeframe": config.ZONE_TIMEFRAME,
         "trade_timeframe": config.TRADE_TIMEFRAME,
         
+        # Dhan credentials (masked for display, but preserve for editing)
+        "dhan_client_id": dhan_client_id if dhan_client_id else "",
+        "dhan_access_token": "",  # Never send token back for security
+        "dhan_configured": bool(dhan_client_id and dhan_access_token),
+
         # RSI settings
         "rsi_period": getattr(config, 'RSI_PERIOD', 14),
         "rsi_overbought": getattr(config, 'RSI_OVERBOUGHT', 70),
@@ -557,7 +564,7 @@ async def update_config(updates: dict):
         log.error(f"Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ==================== DHAN CREDENTIALS ====================
+# ==================== DHAN CREDENTIALS (FIXED) ====================
 
 @app.get("/api/dhan/credentials")
 async def get_dhan_credentials():
@@ -565,76 +572,133 @@ async def get_dhan_credentials():
     return {
         "client_id": config.DHAN_CLIENT_ID[:4] + "****" if config.DHAN_CLIENT_ID else None,
         "access_token": "****" + config.DHAN_ACCESS_TOKEN[-4:] if config.DHAN_ACCESS_TOKEN else None,
-        "configured": bool(config.DHAN_CLIENT_ID and config.DHAN_ACCESS_TOKEN)
+        "configured": bool(config.DHAN_CLIENT_ID and config.DHAN_ACCESS_TOKEN),
+        "connected": bool(orchestrator and orchestrator.data_agent and orchestrator.data_agent.dhan)
     }
 
 @app.post("/api/dhan/credentials")
 async def update_dhan_credentials(credentials: dict):
-    """Update Dhan credentials."""
+    """Update Dhan credentials and reinitialize connections."""
     try:
         client_id = credentials.get("client_id", "").strip()
         access_token = credentials.get("access_token", "").strip()
 
         if not client_id or not access_token:
-            raise HTTPException(status_code=400, detail="Both Client ID and Access Token are required")
+            raise HTTPException(
+                status_code=400,
+                detail="Both Client ID and Access Token are required"
+            )
 
         # Update config
         config.DHAN_CLIENT_ID = client_id
         config.DHAN_ACCESS_TOKEN = access_token
 
-        # Update orchestrator's dhan_context
+        log.info("🔐 Updating Dhan credentials...")
+
+        # CRITICAL: Reinitialize orchestrator's Dhan connections
         if orchestrator:
-            orchestrator.dhan_context = config.get_dhan_context()
-            orchestrator.data_agent.dhan_context = config.get_dhan_context()
-            orchestrator.execution_agent.dhan_context = config.get_dhan_context()
+            from dhanhq import dhanhq, DhanContext
 
-            # Reinitialize dhan instances
-            from dhanhq import dhanhq
-            orchestrator.data_agent.dhan = dhanhq(orchestrator.dhan_context)
-            orchestrator.execution_agent.dhan = dhanhq(orchestrator.dhan_context)
+            # Create new context
+            new_context = DhanContext(client_id, access_token)
 
-            log.info("✅ Dhan credentials updated successfully")
+            # Update orchestrator
+            orchestrator.dhan_context = new_context
+
+            # Reinitialize data agent
+            if orchestrator.data_agent:
+                orchestrator.data_agent.dhan_context = new_context
+                orchestrator.data_agent.dhan = dhanhq(new_context)
+                log.info("✅ Data agent updated with new credentials")
+
+            # Reinitialize execution agent
+            if orchestrator.execution_agent:
+                orchestrator.execution_agent.dhan_context = new_context
+                orchestrator.execution_agent.dhan = dhanhq(new_context)
+                log.info("✅ Execution agent updated with new credentials")
+
+            log.info("✅ Dhan credentials updated successfully across all agents")
+
+        # Notify WebSocket clients
+        await broadcast_message({
+            "type": "dhan_credentials_updated",
+            "data": {
+                "success": True,
+                "message": "Dhan credentials updated successfully"
+            }
+        })
 
         return {
             "success": True,
-            "message": "Dhan credentials updated successfully",
+            "message": "Dhan credentials updated successfully. All connections reinitialized.",
             "configured": True
         }
 
     except Exception as e:
         log.error(f"Failed to update Dhan credentials: {e}")
+        import traceback
+        log.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/dhan/test")
 async def test_dhan_connection():
-    """Test Dhan API connection."""
+    """Test Dhan API connection with current credentials."""
     try:
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-
-        # Try to fetch a simple quote
-        from dhanhq import dhanhq
-        dhan = dhanhq(config.DHAN_CLIENT_ID, config.DHAN_ACCESS_TOKEN)
-
-        # Test with Nifty index
-        result = dhan.ticker_data(securities={"IDX_I": [13]})
-
-        if result and result.get("status") == "success":
-            return {
-                "success": True,
-                "message": "Connection successful! Dhan API is working."
-            }
-        else:
+        if not config.DHAN_CLIENT_ID or not config.DHAN_ACCESS_TOKEN:
             return {
                 "success": False,
-                "message": "Connection failed. Please check your credentials."
+                "message": "Dhan credentials not configured. Please enter Client ID and Access Token."
+            }
+
+        # Use v2.1.0 API with DhanContext
+        from dhanhq import dhanhq, DhanContext
+
+        log.info("🔍 Testing Dhan connection...")
+
+        # Create context and client
+        context = DhanContext(config.DHAN_CLIENT_ID, config.DHAN_ACCESS_TOKEN)
+        dhan = dhanhq(context)
+
+        # Test with Nifty index quote
+        result = dhan.ticker_data(securities={"IDX_I": [13]})
+
+        log.info(f"Test result: {result}")
+
+        if result and result.get("status") == "success":
+            log.info("✅ Dhan connection test successful")
+            return {
+                "success": True,
+                "message": "✅ Connection successful! Dhan API is working perfectly.",
+                "details": "Successfully fetched market data."
+            }
+        else:
+            error_msg = result.get("remarks", {}).get("error_message", "Unknown error")
+            log.error(f"❌ Dhan connection test failed: {error_msg}")
+            return {
+                "success": False,
+                "message": f"❌ Connection failed: {error_msg}",
+                "details": "Please check your Client ID and Access Token."
             }
 
     except Exception as e:
-        log.error(f"Dhan connection test failed: {e}")
+        error_str = str(e)
+        log.error(f"❌ Dhan connection test exception: {error_str}")
+
+        # Better error messages
+        if "401" in error_str or "Unauthorized" in error_str:
+            message = "❌ Authentication failed. Your Access Token may have expired (tokens expire every 24 hours)."
+        elif "403" in error_str or "Forbidden" in error_str:
+            message = "❌ Access denied. Please check your Client ID."
+        elif "Network" in error_str or "timeout" in error_str:
+            message = "❌ Network error. Please check your internet connection."
+        else:
+            message = f"❌ Connection failed: {error_str}"
+
         return {
             "success": False,
-            "message": f"Connection failed: {str(e)}"
+            "message": message,
+            "details": str(e)
         }
 
 

@@ -10,7 +10,6 @@ export default function Layout() {
     { path: '/', icon: Activity, label: 'Dashboard' },
     { path: '/analysis', icon: BarChart3, label: 'Analysis' },
     { path: '/trades', icon: TrendingUp, label: 'Trades' },
-    { path: '/dhan-setup', icon: Key, label: 'Dhan Setup' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ]
   

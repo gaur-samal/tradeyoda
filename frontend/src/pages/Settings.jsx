@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Save, RefreshCw, AlertTriangle, Edit } from 'lucide-react'
+import { Save, RefreshCw, AlertTriangle, Edit, Key, Info, CheckCircle } from 'lucide-react'
 import useStore from '../store/useStore'
 import { getConfig, updateConfig } from '../utils/api'
 
@@ -8,38 +8,88 @@ export default function Settings() {
   const { config, setConfig } = useStore()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
   const [editMode, setEditMode] = useState(false)
   const [editedConfig, setEditedConfig] = useState({})
   
   useEffect(() => {
-    fetchConfig()
+    fetchConfig()  // Remove fetchDhanCredentials() call
   }, [])
-  
+
   const fetchConfig = async () => {
     setLoading(true)
     try {
-      const { data } = await getConfig()
-      setConfig(data)
-      setEditedConfig(data)
+        const { data } = await getConfig()
+        
+        // Merge config with Dhan credentials
+        const configWithDhan = {
+        ...data,
+        // Keep existing dhan_access_token in edit state if not returned
+        dhan_access_token: editedConfig.dhan_access_token || ''
+        }
+        
+        setConfig(configWithDhan)
+        setEditedConfig(configWithDhan)
     } catch (error) {
-      console.error('Failed to fetch config:', error)
+        console.error('Failed to fetch config:', error)
     } finally {
-      setLoading(false)
+        setLoading(false)
     }
   }
-  
   const handleSave = async () => {
     setSaving(true)
     try {
+      // Save regular config
       await updateConfig(editedConfig)
+      
+      // If Dhan credentials provided, update them separately
+      if (editedConfig.dhan_client_id && editedConfig.dhan_access_token) {
+        const dhanResponse = await fetch('/api/dhan/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id: editedConfig.dhan_client_id,
+            access_token: editedConfig.dhan_access_token
+          })
+        })
+        
+        const dhanResult = await dhanResponse.json()
+        if (!dhanResult.success) {
+          throw new Error('Failed to update Dhan credentials')
+        }
+      }
+      
       setConfig(editedConfig)
       setEditMode(false)
       alert('✅ Configuration updated successfully!')
     } catch (error) {
       console.error('Failed to save config:', error)
-      alert('❌ Failed to save configuration')
+      alert('❌ Failed to save configuration: ' + error.message)
     } finally {
       setSaving(false)
+    }
+  }
+  
+  const handleTestConnection = async () => {
+    setTesting(true)
+    try {
+      const response = await fetch('/api/dhan/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      
+      const result = await response.json()
+      
+      if (result.success) {
+        alert('✅ ' + result.message)
+      } else {
+        alert('❌ ' + result.message)
+      }
+    } catch (error) {
+      console.error('Test connection error:', error)
+      alert('❌ Connection test failed: ' + error.message)
+    } finally {
+      setTesting(false)
     }
   }
   
@@ -107,6 +157,98 @@ export default function Settings() {
         </div>
       )}
       
+      {/* Dhan API Credentials */}
+      <div className="card p-6 border-2 border-blue-500/30">
+        <div className="flex items-center gap-3 mb-6">
+          <Key className="w-6 h-6 text-blue-400" />
+          <h3 className="text-xl font-bold">🔐 Dhan API Credentials</h3>
+          <a 
+            href="https://dhan.co/api-access" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="ml-auto text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+          >
+            <Info className="w-4 h-4" />
+            How to get credentials?
+          </a>
+        </div>
+        
+        <div className="space-y-4">
+          <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+            <p className="text-sm text-blue-200">
+              ⚠️ <strong>Important:</strong> Dhan Access Tokens expire every 24 hours. 
+              You'll need to update your Access Token daily from the{' '}
+              <a 
+                href="https://dhan.co/api-access" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:underline"
+              >
+                Dhan API Portal
+              </a>.
+            </p>
+          </div>
+          
+          <div>
+            <label className="text-sm text-gray-400 mb-2 block">Client ID</label>
+            {editMode ? (
+              <input
+                type="text"
+                value={displayConfig.dhan_client_id || ''}
+                onChange={(e) => handleChange('dhan_client_id', e.target.value)}
+                placeholder="Enter your Dhan Client ID"
+                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 focus:border-blue-500 focus:outline-none font-mono"
+              />
+            ) : (
+              <div className="font-mono text-lg">
+              {displayConfig.dhan_configured && displayConfig.dhan_client_id
+                ? displayConfig.dhan_client_id.substring(0, 4) + '****' 
+                : 'Not configured'}
+	      </div>
+            )}
+          </div>
+          
+          <div>
+            <label className="text-sm text-gray-400 mb-2 block">Access Token</label>
+            {editMode ? (
+              <input
+                type="password"
+                value={displayConfig.dhan_access_token || ''}
+                onChange={(e) => handleChange('dhan_access_token', e.target.value)}
+                placeholder="Enter your Dhan Access Token (JWT)"
+                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 focus:border-blue-500 focus:outline-none font-mono"
+              />
+            ) : (
+              <div className="font-mono text-lg">
+              {displayConfig.dhan_configured
+                ? '****' + ' (Configured)' 
+                : 'Not configured'}
+	      </div>
+            )}
+          </div>
+          
+          {editMode && (
+            <button 
+              onClick={handleTestConnection}
+              disabled={testing}
+              className="btn-secondary w-full flex items-center justify-center gap-2"
+            >
+              {testing ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-5 h-5" />
+                  Test Connection
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+      
       {/* Trading Parameters */}
       <div className="card p-6">
         <h3 className="text-xl font-bold mb-6">📊 Trading Parameters</h3>
@@ -164,7 +306,7 @@ export default function Settings() {
         </div>
       </div>
       
-      {/* Experimental Features - EDITABLE */}
+      {/* Experimental Features */}
       <div className="card p-6 border-2 border-yellow-500/30">
         <div className="flex items-center gap-3 mb-6">
           <AlertTriangle className="w-6 h-6 text-yellow-400" />

@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from dhanhq import dhanhq, MarketFeed
 import threading
+import asyncio
 import requests
 import queue
 import time
@@ -63,10 +64,12 @@ class DataCollectionAgent:
             return False
 
     def _market_feed_loop(self):
-        """Background thread for market feed using asyncio.run()."""
+        """Background thread for market feed with its own event loop."""
         log.info("🔌 Market feed thread started")
         
-        import asyncio
+        # Create a NEW event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
         async def feed_worker():
             """Async worker that handles the feed."""
@@ -77,7 +80,7 @@ class DataCollectionAgent:
                     
                     # Get data
                     response = await self.market_feed.get_data()
-                    print(f"market_feed_data response : {response}") 
+                    
                     if response:
                         self._process_market_data(response)
                         
@@ -89,13 +92,14 @@ class DataCollectionAgent:
                         break
         
         try:
-            # Run the async worker in this thread
-            asyncio.run(feed_worker())
+            # Run in this thread's event loop
+            loop.run_until_complete(feed_worker())
         except Exception as e:
             log.error(f"❌ Market feed thread error: {e}")
             import traceback
             log.error(traceback.format_exc())
         finally:
+            loop.close()
             log.info("✅ Market feed thread stopped")
 
 
@@ -291,7 +295,7 @@ class DataCollectionAgent:
                 securities={exchange_segment: securities}
             )
             
-            log.info(f"Raw response: {response}")
+            #log.info(f"Raw response: {response}")
             
             if not response or response.get("status") != "success":
                 log.error(f"API returned error: {response}")

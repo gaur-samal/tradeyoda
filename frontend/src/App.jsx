@@ -14,7 +14,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="analysis" element={<Analysis />} />
           <Route path="trades" element={<Trades />} />
-	  <Route path="dhan-setup" element={<DhanSetup />} />
+	  {/*<Route path="dhan-setup" element={<DhanSetup />} />*/}
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

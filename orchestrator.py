@@ -48,7 +48,7 @@ class TradingOrchestrator:
         """Start the trading system."""
         try:
             self.config.validate()
-            self._setup_realtime_feeds()
+            #self._setup_realtime_feeds()
             self.is_running = True
             log.info("✅ Trading system started")
         except Exception as e:
@@ -121,17 +121,18 @@ class TradingOrchestrator:
             log.error(f"P&L calculation error: {e}")
 
     async def run_zone_identification_cycle(self) -> Optional[Dict]:
-        """15‑minute cycle for zone identification - USING NIFTY FUTURES."""
-        log.info("🔍 Zone identification cycle starting (Nifty Futures)…")
+        """Enhanced 15-minute zone identification with LLM validation."""
+        log.info("🔍 Zone identification cycle starting (LLM-Enhanced)...")
+        
         try:
+            # [Keep your existing data fetching code exactly as is]
             end_date = datetime.now()
             start_date = end_date - timedelta(days=30)
 
             if self.config.USE_BACKTEST_MODE:
-                log.info("🧪 Backtest mode active ‑ loading historical data")
+                log.info("🧪 Backtest mode active - loading historical data")
                 from_date = ensure_str_date(self.config.BACKTEST_FROM)
                 to_date = ensure_str_date(self.config.BACKTEST_TO)
-                # Fetch FUTURES data instead of index
                 df_15min = self.data_agent.fetch_historical_data(
                     security_id=self.config.NIFTY_FUTURES_SECURITY_ID,
                     exchange_segment=self.config.NIFTY_FUTURES_EXCHANGE,
@@ -143,11 +144,10 @@ class TradingOrchestrator:
             else:
                 if not validate_market_hours():
                     log.info("⏰ Outside market hours")
-                    return None
+                    #return None
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=5)
                 log.info("Fetching FUTURES Data")
-                # Fetch FUTURES data instead of index
                 df_15min = self.data_agent.fetch_historical_data(
                     security_id=self.config.NIFTY_FUTURES_SECURITY_ID,
                     exchange_segment=self.config.NIFTY_FUTURES_EXCHANGE,
@@ -158,10 +158,10 @@ class TradingOrchestrator:
                 )
             
             if df_15min.empty:
-                log.warning("⚠️ No 15‑min data available")
+                log.warning("⚠️ No 15-min data available")
                 return None
 
-            # Fetch live quote from FUTURES
+            # Fetch live quote
             quotes = self.data_agent.fetch_market_quotes(
                 securities=[self.config.NIFTY_FUTURES_SECURITY_ID],
                 exchange_segment=self.config.NIFTY_FUTURES_EXCHANGE
@@ -169,10 +169,11 @@ class TradingOrchestrator:
             live_quote = quotes.get(str(self.config.NIFTY_FUTURES_SECURITY_ID), {})
             current_price = live_quote.get("LTP", df_15min["close"].iloc[-1])
 
-            # Calculate ALL technical indicators (existing + new)
+            # Calculate comprehensive indicators
             tech_indicators = self.tech_agent.calculate_comprehensive_indicators(df_15min)
             
-            # Existing zone calculations
+            # STEP 1: Rule-based zone identification (existing logic)
+            log.info("📊 Running rule-based zone identification...")
             vp_data = self.tech_agent.calculate_volume_profile(
                 df_15min, self.config.VP_VALUE_AREA
             )
@@ -180,16 +181,15 @@ class TradingOrchestrator:
                 df_15min, self.config.OB_LOOKBACK
             )
             fvgs = self.tech_agent.identify_fair_value_gaps(df_15min)
-            zones = self.tech_agent.identify_supply_demand_zones(
+            rule_based_zones = self.tech_agent.identify_supply_demand_zones(
                 df_15min, vp_data, order_blocks, fvgs
             )
 
-            # Enhanced market context with new indicators
+            # Market context
             market_context = {
                 "trend": self._determine_trend(df_15min),
                 "volatility": float(df_15min["close"].pct_change().std()),
                 "current_price": current_price,
-                # NEW: Add technical indicators
                 "rsi": tech_indicators.get('latest_rsi'),
                 "rsi_signal": tech_indicators.get('rsi_signal'),
                 "bb_position": tech_indicators.get('bb_position'),
@@ -197,29 +197,55 @@ class TradingOrchestrator:
                 "recent_chart_patterns": tech_indicators.get('chart_patterns', [])[-3:],
             }
 
-            # Pass enhanced context to LLM
-            llm_analysis = self.llm_agent.analyze_zones(zones, market_context)
+            # STEP 2: LLM Enhancement (NEW - validates and ranks zones)
+            log.info("🤖 Running LLM zone validation and enhancement...")
+            llm_enhanced_zones = self.llm_agent.validate_and_enhance_zones(
+                rule_based_zones,
+                df_15min,
+                tech_indicators,
+                market_context
+            )
             
+            # STEP 3: Use LLM-enhanced zones (but keep rule-based as fallback)
+            final_zones = {
+                "demand_zones": llm_enhanced_zones.get('demand_zones', rule_based_zones.get('demand_zones', [])[:3]),
+                "supply_zones": llm_enhanced_zones.get('supply_zones', rule_based_zones.get('supply_zones', [])[:3]),
+                "poc": rule_based_zones.get('poc'),
+                "vah": rule_based_zones.get('vah'),
+                "val": rule_based_zones.get('val'),
+                "current_price": current_price
+            }
+            
+            # STEP 4: Existing LLM analysis (keep for trade evaluation)
+            llm_analysis = self.llm_agent.analyze_zones(final_zones, market_context)
+            
+            # Cache results
             self.analysis_cache = {
-                "zones": zones,
+                "zones": final_zones,
                 "llm_analysis": llm_analysis,
+                "llm_enhanced_zones": llm_enhanced_zones,  # NEW
                 "vp_data": vp_data,
                 "market_context": market_context,
-                "technical_indicators": tech_indicators,  # NEW
+                "technical_indicators": tech_indicators,
                 "timestamp": datetime.now(),
                 "current_price": current_price,
             }
 
-            log.info(
-                f"✅ Zones: {len(zones['demand_zones'])} demand / {len(zones['supply_zones'])} supply | "
-                f"RSI: {tech_indicators.get('latest_rsi', 'N/A')} ({tech_indicators.get('rsi_signal', 'N/A')}) | "
-                f"BB: {tech_indicators.get('bb_position', 'N/A')}"
-            )
+            log.info(f"✅ Zone Identification Complete (LLM-Enhanced):")
+            log.info(f"   Demand Zones: {len(final_zones['demand_zones'])}")
+            log.info(f"   Supply Zones: {len(final_zones['supply_zones'])}")
+            log.info(f"   Market Bias: {llm_enhanced_zones.get('primary_bias', 'Unknown')}")
+            log.info(f"   RSI: {tech_indicators.get('latest_rsi', 'N/A')} ({tech_indicators.get('rsi_signal', 'N/A')})")
+            log.info(f"   BB Position: {tech_indicators.get('bb_position', 'N/A')}")
+            
             return self.analysis_cache
 
         except Exception as e:
             log.error(f"❌ Zone identification error: {e}")
+            import traceback
+            log.error(traceback.format_exc())
             return None
+
 
     async def run_trade_identification_cycle(self) -> Optional[Dict]:
         """3‑minute cycle for trade identification."""
@@ -234,7 +260,7 @@ class TradingOrchestrator:
         try:
             if not validate_market_hours():
                 log.info("⏰ Outside market hours")
-                return None
+                #return None
 
             if not self.analysis_cache or \
                (datetime.now() - self.analysis_cache.get("timestamp", datetime.now())).seconds > 900:
@@ -385,29 +411,44 @@ class TradingOrchestrator:
     def get_active_trades(self) -> list:
         return self.active_trades
     async def run_continuous_monitoring(self):
-        """Run continuous monitoring loop."""
-        log.info("🔄 Starting continuous monitoring...")
+        """
+        Run continuous monitoring with configurable intervals.
         
-        last_zone_analysis = datetime.now() - timedelta(minutes=15)
-        last_trade_check = datetime.now() - timedelta(minutes=3)
+        Uses config parameters:
+        - ZONE_REFRESH_INTERVAL: How often to recalculate zones (minutes)
+        - TRADE_TIMEFRAME: How often to check for trades (minutes)
+        """
+        log.info("🔄 Starting continuous monitoring...")
+        log.info(f"   Zone Analysis: Every {self.config.ZONE_REFRESH_INTERVAL} minutes (using {self.config.ZONE_TIMEFRAME}-min candles)")
+        log.info(f"   Trade Checks: Every {self.config.TRADE_TIMEFRAME} minutes")
+        
+        # Initialize with past times to trigger immediate execution
+        last_zone_analysis = datetime.now() - timedelta(minutes=self.config.ZONE_REFRESH_INTERVAL)
+        last_trade_check = datetime.now() - timedelta(minutes=self.config.TRADE_TIMEFRAME)
         
         while self.is_running:
             try:
                 current_time = datetime.now()
                 
-                # Run zone analysis every 15 minutes
-                if (current_time - last_zone_analysis).seconds >= 900:  # 15 minutes
-                    log.info("🔍 Running scheduled zone analysis...")
+                # Calculate time since last runs
+                zone_elapsed = (current_time - last_zone_analysis).seconds
+                trade_elapsed = (current_time - last_trade_check).seconds
+                
+                # Run zone analysis based on ZONE_REFRESH_INTERVAL
+                zone_interval_seconds = self.config.ZONE_REFRESH_INTERVAL * 60
+                if zone_elapsed >= zone_interval_seconds:
+                    log.info(f"🔍 Running scheduled zone analysis ({int(zone_elapsed/60)} min elapsed)...")
                     await self.run_zone_identification_cycle()
                     last_zone_analysis = current_time
                 
-                # Run trade identification every 3 minutes
-                if (current_time - last_trade_check).seconds >= 180:  # 3 minutes
-                    log.info("🎯 Running scheduled trade identification...")
+                # Run trade identification based on TRADE_TIMEFRAME
+                trade_interval_seconds = self.config.TRADE_TIMEFRAME * 60
+                if trade_elapsed >= trade_interval_seconds:
+                    log.info(f"🎯 Running scheduled trade identification ({int(trade_elapsed/60)} min elapsed)...")
                     await self.run_trade_identification_cycle()
                     last_trade_check = current_time
                 
-                # Sleep for 30 seconds before next iteration
+                # Sleep for 30 seconds before next iteration (efficient checking)
                 await asyncio.sleep(30)
                 
             except asyncio.CancelledError:
@@ -415,6 +456,8 @@ class TradingOrchestrator:
                 break
             except Exception as e:
                 log.error(f"❌ Error in continuous monitoring: {e}")
+                import traceback
+                log.error(traceback.format_exc())
                 await asyncio.sleep(60)  # Wait longer on error
         
         log.info("✅ Continuous monitoring stopped")
@@ -422,8 +465,8 @@ class TradingOrchestrator:
     def shutdown(self):
         log.info("🛑 Shutting down trading system …")
         self.is_running = False
-        if hasattr(self, "data_agent"):
-            self.data_agent.stop_live_feed()
+        #if hasattr(self, "data_agent"):
+        #    self.data_agent.stop_live_feed()
         if hasattr(self, "execution_agent"):
             self.execution_agent.stop_order_updates()
         log.info("✅ System shutdown complete")
