@@ -594,15 +594,19 @@ class OptionsAnalysisAgent:
                 entry_zone = entry_zones[0]
                 futures_entry = (entry_zone.get('zone_top', 0) + entry_zone.get('zone_bottom', 0)) / 2
                 entry_confidence = entry_zone.get('confidence', 0)
+                log.info(f"📍 Entry from zone: {futures_entry:.2f} (confidence: {entry_confidence:.1f}%)")
             else:
                 futures_entry = current_price
                 entry_confidence = 0.5
+                log.info(f"📍 Entry from current price: {futures_entry:.2f}")
             
             # ============ DETERMINE FUTURES TARGET (CAPPED) ============
             if target_zones:
                 target_zone = target_zones[0]
                 zone_target = (target_zone.get('zone_top', 0) + target_zone.get('zone_bottom', 0)) / 2
                 distance = abs(zone_target - futures_entry)
+                log.info(f"   Target zone found at: {zone_target:.0f}")
+                log.info(f"   Distance from entry: {distance:.0f} points")
                 
                 # Cap at MAX_INTRADAY_MOVE
                 if distance > MAX_INTRADAY_MOVE:
@@ -617,19 +621,26 @@ class OptionsAnalysisAgent:
                 else:
                     futures_target = zone_target
                     target_confidence = target_zone.get('confidence', 0)
+                log.info(f"   Final target: {futures_target:.0f}")
             else:
                 # No zone: Use default 80-point target
                 log.info(f"No target zone - using default {DEFAULT_TARGET_POINTS}-point target")
+                log.info(f"   Entry point: {futures_entry:.2f}")
+                log.info(f"   Trade direction: {trade_direction}")
                 if trade_direction == "CALL":
                     futures_target = futures_entry + DEFAULT_TARGET_POINTS
+                    log.info(f"   CALL calculation: {futures_entry:.2f} + {DEFAULT_TARGET_POINTS} = {futures_target:.2f}")
                 else:
                     futures_target = futures_entry - DEFAULT_TARGET_POINTS
+                    log.info(f"   PUT calculation: {futures_entry:.2f} - {DEFAULT_TARGET_POINTS} = {futures_target:.2f}")
                 target_confidence = 0.5
             
             futures_move = abs(futures_target - futures_entry)
             
-            log.info(f"🎯 Target zone: {futures_target:.0f} ({futures_move:.0f} points move)")
-            
+            log.info(f"✅ Target Summary:")
+            log.info(f"   Entry: {futures_entry:.2f}")
+            log.info(f"   Target: {futures_target:.2f}")
+            log.info(f"   Move: {futures_move:.0f} points {'UP' if futures_target > futures_entry else 'DOWN'}") 
             # ============ FILTER VALID STRIKES WITH GREEKS ============
             valid_col = 'call_has_valid_greeks' if trade_direction == "CALL" else 'put_has_valid_greeks'
             has_greeks = False
