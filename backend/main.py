@@ -20,7 +20,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from orchestrator import TradingOrchestrator
 from src.config import config
+from src.config import Config
 from src.utils.logger import log
+from src.utils.credentials_store import credentials_store
+# ===== LOAD STORED CREDENTIALS (after logger is initialized) =====
+config.load_dhan_credentials()
 
 # Global orchestrator instance
 orchestrator: Optional[TradingOrchestrator] = None
@@ -120,12 +124,17 @@ async def get_status():
     """Get system status."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
+    is_expiry = config.is_expiry_day()
+    instrument = config.get_active_instrument()
     return {
         "running": orchestrator.is_running,
         "active_trades": len([t for t in orchestrator.active_trades if t.get('status') == 'ACTIVE']),
         "total_trades": len(orchestrator.active_trades),
         "analysis_available": orchestrator.analysis_cache is not None,
+        "instrument": instrument["name"],
+        "is_expiry_day": is_expiry,
+        "no_trades_on_expiry": config.NO_TRADES_ON_EXPIRY,
+        "trading_blocked": is_expiry and config.NO_TRADES_ON_EXPIRY,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -142,7 +151,6 @@ async def get_monitoring_status():
         "continuous_mode": continuous_active,
         "timestamp": datetime.now().isoformat()
     }
-
 
 @app.post("/api/start")
 async def start_trading():
@@ -188,6 +196,37 @@ async def stop_trading():
     except Exception as e:
         log.error(f"Failed to stop: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+#==============FUTURES STATUS CHECK===================
+@app.get("/api/futures/status")
+async def get_futures_status():
+    """Get current futures contract status."""
+    try:
+        from src.utils.security_master import security_master
+
+        # Get both Nifty and BankNifty futures
+        nifty_futures = security_master.get_current_futures_contract("NIFTY")
+        banknifty_futures = security_master.get_current_futures_contract("BANKNIFTY")
+
+        return {
+            "nifty": {
+                "contract_name": nifty_futures['contract_name'] if nifty_futures else None,
+                "security_id": nifty_futures['security_id'] if nifty_futures else None,
+                "expiry_date": nifty_futures['expiry_date'].isoformat() if nifty_futures else None,
+                "days_to_expiry": (nifty_futures['expiry_date'] - datetime.now()).days if nifty_futures else None
+            },
+            "banknifty": {
+                "contract_name": banknifty_futures['contract_name'] if banknifty_futures else None,
+                "security_id": banknifty_futures['security_id'] if banknifty_futures else None,
+                "expiry_date": banknifty_futures['expiry_date'].isoformat() if banknifty_futures else None,
+                "days_to_expiry": (banknifty_futures['expiry_date'] - datetime.now()).days if banknifty_futures else None
+            }
+        }
+    except Exception as e:
+        log.error(f"Error getting futures status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 #==============CONTINOUS MONITORING===================
 @app.post("/api/start-continuous")
 async def start_continuous_monitoring():
@@ -426,7 +465,21 @@ async def get_config():
     """Get current configuration (safe fields only)."""
     dhan_client_id = config.DHAN_CLIENT_ID
     dhan_access_token = config.DHAN_ACCESS_TOKEN
+    # Get active instrument config
+    instrument = config.get_active_instrument()
     return {
+        # ===== Include selected_instrument =====
+        "selected_instrument": config.SELECTED_INSTRUMENT,
+        
+        # Include full instrument details for display
+        "instrument_config": {
+            "symbol": instrument["symbol"],
+            "name": instrument["name"],
+            "expiry_type": instrument["expiry_type"],
+            "expiry_day": instrument["expiry_day"],
+            "lot_size": instrument["lot_size"]
+        },
+        # Trading params
         "use_sandbox": config.USE_SANDBOX,
         "risk_reward_ratio": config.RISK_REWARD_RATIO,
         "max_risk_percentage": config.MAX_RISK_PERCENTAGE,
@@ -469,7 +522,16 @@ async def update_config(updates: dict):
     
     try:
         updated_fields = []
-        
+        # ===== Instrument Selection =====
+        if "selected_instrument" in updates:
+            instrument = updates["selected_instrument"]
+            if instrument in ["NIFTY", "BANKNIFTY"]:
+                Config.SELECTED_INSTRUMENT = instrument 
+                config.SELECTED_INSTRUMENT = instrument
+                updated_fields.append("selected_instrument")
+                log.info(f"✅ Switched to {instrument}")
+            else:
+                raise HTTPException(status_code=400, detail="Invalid instrument") 
         # Update trading parameters
         if "risk_reward_ratio" in updates:
             config.RISK_REWARD_RATIO = float(updates["risk_reward_ratio"])
@@ -564,6 +626,53 @@ async def update_config(updates: dict):
         log.error(f"Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==================== INSTRUMENT SELECTION  ======================
+@app.post("/api/config/switch-instrument")
+async def switch_instrument(instrument_data: dict):
+    """Switch trading instrument (requires system restart)."""
+    try:
+        instrument = instrument_data.get("instrument", "NIFTY")
+
+        if instrument not in ["NIFTY", "BANKNIFTY"]:
+            raise HTTPException(status_code=400, detail="Invalid instrument")
+
+        config.SELECTED_INSTRUMENT = instrument
+
+        log.info(f"🔄 Switched to {instrument}")
+
+        return {
+            "success": True,
+            "instrument": instrument,
+            "config": config.get_active_instrument(),
+            "message": f"Switched to {instrument}. Please restart the system."
+        }
+
+    except Exception as e:
+        log.error(f"Failed to switch instrument: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/config/instruments")
+async def get_available_instruments():
+    """Get list of available instruments."""
+    return {
+        "instruments": [
+            {
+                "id": "NIFTY",
+                "name": "Nifty 50",
+                "expiry": "Weekly (Tuesday)",
+                "lot_size": 25
+            },
+            {
+                "id": "BANKNIFTY",
+                "name": "Bank Nifty",
+                "expiry": "Monthly (Last Tuesday)",
+                "lot_size": 15
+            }
+        ],
+        "active": config.SELECTED_INSTRUMENT
+    }
+
+
 # ==================== DHAN CREDENTIALS (FIXED) ====================
 
 @app.get("/api/dhan/credentials")
@@ -592,8 +701,11 @@ async def update_dhan_credentials(credentials: dict):
         # Update config
         config.DHAN_CLIENT_ID = client_id
         config.DHAN_ACCESS_TOKEN = access_token
-
+        # ===== SAVE TO PERSISTENT STORE =====
+        credentials_store.save_dhan_credentials(client_id, access_token)
         log.info("🔐 Updating Dhan credentials...")
+        
+        log.info("✅ Credentials saved to persistent storage")
 
         # CRITICAL: Reinitialize orchestrator's Dhan connections
         if orchestrator:
@@ -619,6 +731,7 @@ async def update_dhan_credentials(credentials: dict):
 
             log.info("✅ Dhan credentials updated successfully across all agents")
 
+        
         # Notify WebSocket clients
         await broadcast_message({
             "type": "dhan_credentials_updated",
@@ -639,6 +752,19 @@ async def update_dhan_credentials(credentials: dict):
         import traceback
         log.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/dhan/credential-source")
+async def get_credential_source():
+    """Check where Dhan credentials are loaded from."""
+    from src.utils.credentials_store import credentials_store
+
+    stored_creds = credentials_store.get_dhan_credentials()
+
+    return {
+        "has_stored_credentials": stored_creds is not None,
+        "current_client_id": config.DHAN_CLIENT_ID[:4] + "****" if config.DHAN_CLIENT_ID else "Not set",
+        "source": "persistent_storage" if stored_creds else "env_file"
+    }
 
 
 @app.post("/api/dhan/test")

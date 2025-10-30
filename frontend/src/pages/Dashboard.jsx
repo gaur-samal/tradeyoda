@@ -117,7 +117,7 @@ export default function Dashboard() {
       toast.success(
         '🤖 Continuous auto-trading activated!\n\n' +
         '• Zone analysis every 15 minutes\n' +
-        '• Trade identification every 3 minutes\n' +
+        '• Trade identification every 5 minutes\n' +
         '• Auto-exit at 3:25 PM\n' +
         '• No new trades after 3:00 PM',
         { duration: 6000, id: loadingToast }
@@ -349,7 +349,7 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-green-400">✅</span>
-                <span className="text-gray-300">Trade identification every 3 minutes</span>
+                <span className="text-gray-300">Trade identification every 5 minutes</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-yellow-400">⏰</span>
@@ -426,7 +426,7 @@ export default function Dashboard() {
           >
             <div className="text-4xl mb-4">🎯</div>
             <h3 className="text-xl font-bold mb-2">Identify Trades</h3>
-            <p className="text-gray-400 mb-4">3-minute cycle for trade opportunity identification</p>
+            <p className="text-gray-400 mb-4">5-minute cycle for trade opportunity identification</p>
             <div className="text-purple-400 font-semibold">
               {tradeLoading ? 'Identifying...' : 'Click to Run →'}
             </div>

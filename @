@@ -26,8 +26,7 @@ class Config:
     DHAN_ACCESS_TOKEN: str = os.getenv("DHAN_ACCESS_TOKEN", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
-    # Flag to track if credentials were loaded from store
-    _credentials_loaded_from_store: bool = False 
+    
     # Environment
     USE_SANDBOX: bool = os.getenv("USE_SANDBOX", "true").lower() == "true"
     
@@ -240,25 +239,23 @@ class Config:
     # ==================== DHAN CREDENTIALS ====================
     # Load from persistent store first, fallback to .env
     @classmethod
-    def load_dhan_credentials(cls):
-        if cls._credentials_loaded_from_store:
-            return
-        try:
-            from src.utils.credentials_store import credentials_store
-            from src.utils.logger import log
-            
-            stored_creds = credentials_store.get_dhan_credentials()
-            
-            if stored_creds:
-                log.info("🔑 Using Dhan credentials from persistent storage")
-                cls.DHAN_CLIENT_ID = stored_creds['client_id']
-                cls.DHAN_ACCESS_TOKEN = stored_creds['access_token']
-                cls._credentials_loaded_from_store = True
-            else:
-                log.info("🔑 Using Dhan credentials from .env")
-        except Exception as e:
-            # This is okay - just use .env values
-            print(f"⚠️ Could not load stored credentials, using .env: {e}")
+    def _load_dhan_credentials(cls):
+        """Load Dhan credentials from store or .env."""
+        from src.utils.credentials_store import credentials_store
+        from src.utils.logger import log
+        # Try loading from persistent store first
+        stored_creds = credentials_store.get_dhan_credentials()
+
+        if stored_creds:
+            log.info("🔑 Using Dhan credentials from persistent storage")
+            cls.DHAN_CLIENT_ID = stored_creds['client_id']
+            cls.DHAN_ACCESS_TOKEN = stored_creds['access_token']
+        else:
+            # Fallback to .env
+            log.info("🔑 Using Dhan credentials from .env (fallback)")
+            cls.DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "")
+            cls.DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "")
+
 
     @classmethod
     def get_dhan_context(cls):
@@ -283,7 +280,7 @@ class Config:
 
 # ==================== INITIALIZE CREDENTIALS ====================
 # Call this AFTER the class is fully defined
-Config.load_dhan_credentials()
+Config._load_dhan_credentials()
 
 # Global config instance
 config = Config()

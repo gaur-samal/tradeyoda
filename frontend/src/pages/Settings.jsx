@@ -13,7 +13,7 @@ export default function Settings() {
   const [editedConfig, setEditedConfig] = useState({})
   
   useEffect(() => {
-    fetchConfig()  // Remove fetchDhanCredentials() call
+    fetchConfig()
   }, [])
 
   const fetchConfig = async () => {
@@ -21,11 +21,9 @@ export default function Settings() {
     try {
         const { data } = await getConfig()
         
-        // Merge config with Dhan credentials
         const configWithDhan = {
-        ...data,
-        // Keep existing dhan_access_token in edit state if not returned
-        dhan_access_token: editedConfig.dhan_access_token || ''
+          ...data,
+          dhan_access_token: editedConfig.dhan_access_token || ''
         }
         
         setConfig(configWithDhan)
@@ -36,13 +34,12 @@ export default function Settings() {
         setLoading(false)
     }
   }
+
   const handleSave = async () => {
     setSaving(true)
     try {
-      // Save regular config
       await updateConfig(editedConfig)
       
-      // If Dhan credentials provided, update them separately
       if (editedConfig.dhan_client_id && editedConfig.dhan_access_token) {
         const dhanResponse = await fetch('/api/dhan/credentials', {
           method: 'POST',
@@ -248,6 +245,94 @@ export default function Settings() {
           )}
         </div>
       </div>
+       
+      {/* Instrument Selection - NEW */}
+      <div className="card p-6 border-2 border-green-500/30">
+        <h3 className="text-xl font-bold mb-6">📈 Trading Instrument</h3>
+        
+        {/* Display current instrument info */}
+        {displayConfig.instrument_config && (
+          <div className="mb-4 p-4 bg-white/5 rounded-lg">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <span className="text-sm text-gray-400">Instrument</span>
+                <div className="text-lg font-semibold">
+                  {displayConfig.instrument_config.name}
+                </div>
+              </div>
+              <div>
+                <span className="text-sm text-gray-400">Symbol</span>
+                <div className="text-lg font-semibold">
+                  {displayConfig.instrument_config.symbol}
+                </div>
+              </div>
+              <div>
+                <span className="text-sm text-gray-400">Expiry Type</span>
+                <div className="text-lg">
+                  {displayConfig.instrument_config.expiry_type}
+                </div>
+              </div>
+              <div>
+                <span className="text-sm text-gray-400">Lot Size</span>
+                <div className="text-lg">
+                  {displayConfig.instrument_config.lot_size}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        <div>
+          <label className="text-sm text-gray-400 mb-2 block">Select Instrument</label>
+          {editMode ? (
+            <select
+              value={displayConfig.selected_instrument || 'NIFTY'}
+              onChange={(e) => {
+                const instrument = e.target.value
+                
+                // Instrument configs
+                const instrumentConfigs = {
+                  'NIFTY': {
+                    symbol: 'NIFTY',
+                    name: 'Nifty 50',
+                    expiry_type: 'WEEKLY',
+                    expiry_day: 'TUESDAY',
+                    lot_size: 25
+                  },
+                  'BANKNIFTY': {
+                    symbol: 'BANKNIFTY',
+                    name: 'Bank Nifty',
+                    expiry_type: 'MONTHLY',
+                    expiry_day: 'LAST_TUESDAY',
+                    lot_size: 15
+                  }
+                }
+                
+                // Update both selected_instrument and instrument_config
+                setEditedConfig(prev => ({
+                  ...prev,
+                  selected_instrument: instrument,
+                  instrument_config: instrumentConfigs[instrument]
+                }))
+              }}
+              className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-lg focus:border-purple-500 focus:outline-none"
+            >
+              <option value="NIFTY">📊 Nifty 50 (Weekly - Tuesday, Lot: 25)</option>
+              <option value="BANKNIFTY">🏦 Bank Nifty (Monthly - Last Tuesday, Lot: 15)</option>
+            </select>
+          ) : (
+            <div className="text-2xl font-bold flex items-center gap-2">
+              {displayConfig.selected_instrument === 'BANKNIFTY' ? '🏦 Bank Nifty' : '📊 Nifty 50'}
+            </div>
+          )}
+        </div>
+        
+        <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+          <p className="text-sm text-yellow-200">
+            ⚠️ <strong>Note:</strong> Changing instrument requires system restart to take effect.
+          </p>
+        </div>
+      </div>
       
       {/* Trading Parameters */}
       <div className="card p-6">
@@ -314,7 +399,6 @@ export default function Settings() {
         </div>
         
         <div className="space-y-4">
-          {/* Backtest Mode */}
           <div className="p-4 bg-white/5 rounded-lg">
             <div className="flex items-start justify-between mb-3">
               <div className="flex-1">
@@ -370,7 +454,6 @@ export default function Settings() {
             )}
           </div>
           
-          {/* No Trades on Expiry */}
           <div className="p-4 bg-white/5 rounded-lg">
             <div className="flex items-start justify-between">
               <div className="flex-1">
@@ -401,7 +484,6 @@ export default function Settings() {
             </div>
           </div>
           
-          {/* Order Settings */}
           <div className="p-4 bg-white/5 rounded-lg">
             <div className="font-semibold mb-3">Order Execution Settings</div>
             <div className="grid grid-cols-2 gap-4">

@@ -27,7 +27,7 @@ class LLMAnalysisAgent:
             dict: LLM analysis results
         """
         prompt = f"""
-You are an expert market analyst specializing in technical analysis for Nifty 50 Futures and options trading.
+You are an expert market analyst specializing in technical analysis for Nifty 50/BankNifty Futures and options trading.
 
 Analyze the following technical data and provide your assessment:
 
@@ -131,7 +131,7 @@ Respond in JSON format with:
             swing_highs = self._find_swing_points(price_data, 'high')
             swing_lows = self._find_swing_points(price_data, 'low')
             
-            prompt = f"""You are an expert technical analyst for Nifty Futures intraday trading.
+            prompt = f"""You are an expert technical analyst for Nifty/BankNifty Futures intraday trading.
 
 CURRENT MARKET STATE:
 - Current Price: {current_price:.2f}
@@ -239,7 +239,7 @@ IMPORTANT:
 - Focus on INTRADAY relevance (zones within reach today)
 - Prioritize fresh zones over tested ones
 - Consider current RSI and BB position for entries
-- Zones should be 20-50 point ranges for Nifty
+- Zones should be 20-30 point ranges for Nifty and 10-20 point range for BankNifty.
 """
 
             response = self.client.chat.completions.create(
@@ -247,7 +247,7 @@ IMPORTANT:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a professional technical analyst specializing in intraday Nifty Futures trading with expertise in supply/demand zones, volume profile analysis, and multi-indicator confluence."
+                        "content": "You are a professional technical analyst specializing in intraday Nifty/BankNifty Futures trading with expertise in supply/demand zones, volume profile analysis, and multi-indicator confluence."
                     },
                     {"role": "user", "content": prompt}
                 ],
@@ -343,7 +343,7 @@ IMPORTANT:
             dict: Trade evaluation results
         """
         prompt = f"""
-Evaluate this options trade setup for Nifty 50:
+Evaluate this options trade setup for Nifty 50/BankNifty:
 
 TRADE DETAILS:
 {json.dumps(trade_data, indent=2, default=str)}
@@ -366,7 +366,7 @@ EVALUATION CRITERIA:
 - Chart pattern alignment with trade direction
 - Clean price action with clear stop loss level
 
-Assess if this trade has >= 80% probability of hitting the target before stop loss.
+Assess if this trade has >= 70% probability of hitting the target before stop loss.
 
 Respond in JSON:
 {{

@@ -122,7 +122,12 @@ class TradingOrchestrator:
 
     async def run_zone_identification_cycle(self) -> Optional[Dict]:
         """Enhanced 15-minute zone identification with LLM validation."""
-        log.info("🔍 Zone identification cycle starting (LLM-Enhanced)...")
+        # Log active instrument
+        instrument = self.config.get_active_instrument()
+        log.info(f"🔍 Zone identification for {instrument['name']} ({instrument['symbol']})...")
+        log.info(f"   Expiry Type: {instrument['expiry_type']}, Day: {instrument['expiry_day']}")
+        log.info(f"   Lot Size: {instrument['lot_size']}")
+        #log.info("🔍 Zone identification cycle starting (LLM-Enhanced)...")
         
         try:
             # [Keep your existing data fetching code exactly as is]
@@ -251,12 +256,11 @@ class TradingOrchestrator:
         """3‑minute cycle for trade identification."""
         log.info("🎯 Trade identification cycle starting …")
         
-        if self.config.NO_TRADES_ON_EXPIRY:
-            today = datetime.now().date()
-            if today.weekday() == 1:  # Tuesday
-                log.info("🚫 Expiry day (Tuesday) – no trades executed today")
-                return None
-
+        # ===== CHECK EXPIRY DAY =====
+        if self.config.NO_TRADES_ON_EXPIRY and self.config.is_expiry_day():
+            instrument_name = self.config.get_active_instrument()["name"]
+            log.warning(f"⚠️ No trades on expiry day for {instrument_name}")
+            return None
         try:
             if not validate_market_hours():
                 log.info("⏰ Outside market hours")
@@ -294,7 +298,7 @@ class TradingOrchestrator:
                 return None
 
             # Fetch option chain using INDEX as underlying (correct for options)
-            expiry = get_nearest_expiry()
+            expiry = get_nearest_expiry(self.config.get_active_instrument())
             #print(f"expiry : {expiry}")
             option_chain = self.data_agent.fetch_option_chain(
                 self.config.NIFTY_INDEX_SECURITY_ID,  # Use index for options
@@ -362,51 +366,145 @@ class TradingOrchestrator:
                 if abs(current_price - zone["zone_bottom"]) / current_price <= 0.005:
                     return {"direction": "PUT", "zone": zone}
         return None
-
+   
     async def _execute_trade(self, setup: Dict, evaluation: Dict) -> Dict:
-        """Execute trade with configurable quantity and order type."""
-        try:
+      """Execute trade with fresh option price and security ID lookup."""
+      try:
+            from src.utils.security_master import security_master
+            
+            # ===== STEP 1: FETCH LIVE OPTION PRICE =====
+            if setup.get("needs_live_price"):
+                  log.info(f"🔍 Fetching live option chain for strike {setup['strike']}...")
+                  
+                  # Refetch option chain for latest prices
+                  expiry = setup.get("expiry") or get_nearest_expiry(self.config.get_active_instrument())
+                  option_chain = self.data_agent.fetch_option_chain(
+                  self.config.INSTRUMENT_INDEX_SECURITY_ID,
+                  self.config.INSTRUMENT_INDEX_EXCHANGE,
+                  expiry
+                  )
+                  
+                  if not option_chain or option_chain.get("status") != "success":
+                        log.error("❌ Failed to fetch fresh option chain")
+                        return {"success": False, "error": "Could not fetch live option prices"}
+                  
+                  # Find the specific strike
+                  strike = setup["selected_strike"]
+                  option_type = "CE" if setup["option_type"] == "CALL" else "PE"
+                  
+                  strike_data = None
+                  for chain_strike in option_chain.get("data", []):
+                        if chain_strike.get("strike_price") == strike:
+                              if option_type == "CE":
+                                    strike_data = chain_strike.get("call_options", {})
+                              else:
+                                    strike_data = chain_strike.get("put_options", {})
+                              break
+                  
+                  if not strike_data:
+                        log.error(f"❌ Strike {strike} not found in option chain")
+                        return {"success": False, "error": "Strike not found"}
+                  
+                  # Get live price
+                  live_premium = strike_data.get("LTP") or strike_data.get("ltp")
+                  
+                  if not live_premium or live_premium == 0:
+                        log.warning(f"⚠️ No live price for {strike} {option_type}, using estimate")
+                        live_premium = setup["entry_premium"]
+                  else:
+                        log.info(f"📊 Live premium: ₹{live_premium} (estimate was ₹{setup['entry_premium']})")
+                  
+                  # Update setup with live price
+                  setup["entry_premium"] = live_premium
+                  
+                  # Recalculate stop loss (5% of premium)
+                  setup["stop_loss_premium"] = live_premium * 0.95
+                  
+                  # Recalculate target based on risk:reward
+                  risk_per_lot = live_premium - setup["stop_loss_premium"]
+                  reward_per_lot = risk_per_lot * self.config.RISK_REWARD_RATIO
+                  setup["target_premium"] = live_premium + reward_per_lot
+                  
+                  log.info(f"✅ Updated prices:")
+                  log.info(f"   Entry: ₹{setup['entry_premium']:.2f}")
+                  log.info(f"   SL: ₹{setup['stop_loss_premium']:.2f}")
+                  log.info(f"   Target: ₹{setup['target_premium']:.2f}")
+                  log.info(f"   Risk:Reward = 1:{self.config.RISK_REWARD_RATIO}")
+            
+            # ===== STEP 2: GET OPTION SECURITY ID =====
+            expiry = setup.get("expiry") or get_nearest_expiry(self.config.get_active_instrument())
+            
+            # Get instrument symbol
+            instrument = self.config.get_active_instrument()
+            symbol = instrument["symbol"]
+            
+            # Get security ID from security master
+            security_id = security_master.get_option_security_id(
+                  symbol=symbol,
+                  strike=setup["selected_strike"],
+                  option_type=setup["option_type"],
+                  expiry=expiry
+            )
+            
+            if not security_id:
+                  log.error(f"❌ Could not find security ID for {symbol} {setup['selected_strike']} {setup['option_type']}")
+                  return {"success": False, "error": "Option security ID not found in master file"}
+            
+            log.info(f"✅ Found option security ID: {security_id}")
+            
+            # Update setup with security ID
+            setup["security_id"] = security_id
+            setup["exchange_segment"] = "NSE_FNO"
+            
+            # ===== STEP 3: CREATE TRADE RECORD =====
             record = create_trade_record(setup, evaluation)
+            
+            # ===== STEP 4: EXECUTE OR PAPER TRADE =====
             if self.config.USE_SANDBOX:
-                log.info("📝 Paper trade recorded (sandbox mode)")
-                record["status"] = "PAPER"
-                self.active_trades.append(record)
-                return {"success": True, "mode": "paper"}
-
+                  log.info("📝 Paper trade recorded (sandbox mode)")
+                  record["status"] = "PAPER"
+                  record["security_id"] = security_id
+                  self.active_trades.append(record)
+                  return {"success": True, "mode": "paper", "security_id": security_id}
+            
+            # ===== STEP 5: LIVE TRADING - PLACE ORDER =====
+            log.info(f"📤 Placing LIVE order for {symbol} {setup['selected_strike']} {setup['option_type']}")
+            
             order_params = {
-                "security_id": setup.get("security_id", "13"),
-                "exchange_segment": setup.get("exchange_segment", "NSE_FNO"),
-                "transaction_type": setup.get("transaction_type", "BUY"),
-                "order_type": setup.get("order_type", "LIMIT"),
-                "product_type": setup.get("product_type", "INTRADAY"),
-                "quantity": getattr(self.config, "ORDER_QUANTITY", 1),
-                "entry_price": setup["entry_price"],
-                "stop_loss": setup["stop_loss"],
-                "target_price": setup["target_price"],
-                "trailing_jump": setup.get("trailing_jump", 0),
-                "use_super_order": getattr(self.config, "USE_SUPER_ORDER", True),
-                "correlation_id": f"TRADE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                  "security_id": str(security_id),
+                  "exchange_segment": "NSE_FNO",
+                  "transaction_type": "BUY",
+                  "order_type": "LIMIT",
+                  "product_type": "INTRA",
+                  "quantity": self.config.ORDER_QUANTITY * instrument["lot_size"],
+                  "entry_price": setup["entry_premium"],
+                  "stop_loss": setup["stop_loss_premium"],
+                  "target_price": setup["target_premium"],
+                  "use_super_order": self.config.USE_SUPER_ORDER,
+                  "correlation_id": f"TRADE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             }
-
-            log.info(f"📤 Executing trade: {order_params['transaction_type']} "
-                    f"{order_params['quantity']} @ {order_params['entry_price']}")
+            
+            log.info(f"Order params: {order_params}")
             
             result = self.execution_agent.place_bracket_or_super_order(order_params)
             
             if result["success"]:
-                record["order_ids"] = result
-                record["status"] = "ACTIVE"
-                record["order_type"] = "SUPER_ORDER" if order_params["use_super_order"] else "BRACKET_ORDER"
-                self.active_trades.append(record)
-                log.info(f"✅ Trade executed successfully: Order ID {result.get('order_id')}")
+                  record["order_ids"] = result
+                  record["status"] = "ACTIVE"
+                  record["security_id"] = security_id
+                  self.active_trades.append(record)
+                  log.info(f"✅ Order placed successfully: {result.get('order_id')}")
             else:
-                log.error(f"❌ Trade execution failed: {result}")
+                  log.error(f"❌ Order placement failed: {result}")
             
             return result
             
-        except Exception as e:
+      except Exception as e:
             log.error(f"❌ Trade execution error: {e}")
+            import traceback
+            log.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
+
 
     def get_active_trades(self) -> list:
         return self.active_trades

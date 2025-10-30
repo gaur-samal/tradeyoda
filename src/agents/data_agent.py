@@ -195,7 +195,7 @@ class DataCollectionAgent:
     
     def fetch_option_chain(self, security_id, exchange_segment, expiry_date, max_retries=3):
         """
-        Fetch option chain with proper data transformation.
+        Fetch option chain with proper data transformation including Greeks.
         """
         for attempt in range(max_retries):
             try:
@@ -230,29 +230,48 @@ class DataCollectionAgent:
                         ce_data = strike_data.get("ce", {})
                         pe_data = strike_data.get("pe", {})
                         
+                        # ===== EXTRACT GREEKS =====
+                        call_greeks = ce_data.get('greeks', {})
+                        put_greeks = pe_data.get('greeks', {})
+                        
                         row = {
                             'strike': strike,
+                            
                             # Call data
                             'call_oi': ce_data.get('oi', 0),
                             'call_volume': ce_data.get('volume', 0),
                             'call_iv': ce_data.get('implied_volatility', 0),
                             'call_ltp': ce_data.get('last_price', 0),
                             'call_oi_change': ce_data.get('oi', 0) - ce_data.get('previous_oi', 0),
+                            'call_greeks': call_greeks,  # ← ADD THIS
+                            
                             # Put data
                             'put_oi': pe_data.get('oi', 0),
                             'put_volume': pe_data.get('volume', 0),
                             'put_iv': pe_data.get('implied_volatility', 0),
                             'put_ltp': pe_data.get('last_price', 0),
                             'put_oi_change': pe_data.get('oi', 0) - pe_data.get('previous_oi', 0),
+                            'put_greeks': put_greeks,    # ← ADD THIS
                         }
                         rows.append(row)
                     
                     df = pd.DataFrame(rows)
                     df = df.sort_values('strike')
                     
+                    # ===== LOG GREEKS AVAILABILITY =====
+                    has_call_greeks = df['call_greeks'].apply(lambda x: isinstance(x, dict) and len(x) > 0).sum()
+                    has_put_greeks = df['put_greeks'].apply(lambda x: isinstance(x, dict) and len(x) > 0).sum()
+                    
                     log.info(f"✅ Processed {len(df)} strikes from option chain")
                     log.info(f"   Spot price: {spot_price}")
                     log.info(f"   Strike range: {df['strike'].min()} to {df['strike'].max()}")
+                    log.info(f"   Strikes with call Greeks: {has_call_greeks}/{len(df)}")
+                    log.info(f"   Strikes with put Greeks: {has_put_greeks}/{len(df)}")
+                    
+                    # Log sample Greeks for debugging
+                    if has_call_greeks > 0:
+                        sample_strike = df[df['call_greeks'].apply(lambda x: isinstance(x, dict) and len(x) > 0)].iloc[0]
+                        log.info(f"   Sample call Greeks at strike {sample_strike['strike']}: {sample_strike['call_greeks']}")
                     
                     return df
                 else:
@@ -295,7 +314,7 @@ class DataCollectionAgent:
                 securities={exchange_segment: securities}
             )
             
-            #log.info(f"Raw response: {response}")
+            log.info(f"Raw response: {response}")
             
             if not response or response.get("status") != "success":
                 log.error(f"API returned error: {response}")
