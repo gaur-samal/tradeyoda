@@ -168,20 +168,55 @@ def validate_market_hours() -> bool:
     
     return market_open <= now <= market_close
 
-
-def create_trade_record(trade_setup: Dict, llm_evaluation: Dict) -> Dict:
-    """Create a standardized trade record."""
+def create_trade_record(setup: Dict, evaluation: Dict) -> Dict:
+    """Create a standardized trade record with all relevant information."""
+    from datetime import datetime
+    risk_reward_ratio = setup.get("risk_reward_ratio") or setup.get("risk_reward")    
     return {
-        "timestamp": datetime.now(),
-        "direction": trade_setup.get("direction"),
-        "entry_price": trade_setup.get("entry_price"),
-        "target_price": trade_setup.get("target_price"),
-        "stop_loss": trade_setup.get("stop_loss"),
-        "risk_reward": trade_setup.get("risk_reward"),
-        "probability": llm_evaluation.get("probability_estimate"),
-        "confidence": llm_evaluation.get("confidence_score"),
-        "reasoning": llm_evaluation.get("reasoning"),
+        "timestamp": datetime.now().isoformat(),
+        "trade_id": f"TRADE_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        
+        # Option details
+        "symbol": setup.get("symbol", "NIFTY"),
+        "strike": setup.get("selected_strike") or setup.get("strike"),
+        "option_type": setup.get("option_type"),
+        "expiry": setup.get("expiry"),
+        "security_id": setup.get("security_id"),
+        
+        # Trade details - handle both field names
+        "direction": setup.get("direction") or setup.get("option_type"),
+        "entry_price": setup.get("entry_premium") or setup.get("entry_price"),
+        "target_price": setup.get("target_premium") or setup.get("target_price"),
+        "stop_loss": setup.get("stop_loss_premium") or setup.get("stop_loss"),
+        "quantity": setup.get("quantity", 0),
+        
+        # Risk metrics
+        "risk_reward_ratio": float(risk_reward_ratio) if risk_reward_ratio else 0.0,
+        "risk_per_lot": setup.get("risk_amount"),
+        "reward_per_lot": setup.get("reward_amount"),
+
+        # LLM evaluation
+        "probability": evaluation.get("probability_estimate", 0),
+        "llm_reasoning": evaluation.get("reasoning", ""),
+        "entry_confirmation": evaluation.get("entry_confirmation", ""),
+        
+        # Confluence
+        "confluence": evaluation.get("confluence_count", 0),
+        "confluence_score": evaluation.get("zone_confluence_score", 0),
+        
+        # Greeks
+        "delta": setup.get("delta"),
+        "theta": setup.get("theta"),
+        "gamma": setup.get("gamma"),
+        "vega": setup.get("vega"),
+        
+        # Status
         "status": "PENDING",
         "pnl": 0.0,
+        "exit_price": None,
+        "exit_time": None,
+        "order_ids": {},
     }
+
+
 

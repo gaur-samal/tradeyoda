@@ -307,14 +307,14 @@ class DataCollectionAgent:
             # Convert securities to integers if they're strings
             securities = [int(sec) if isinstance(sec, str) else sec for sec in securities]
             
-            log.info(f"Fetching quotes for {exchange_segment}: {securities}")
+            log.debug(f"Fetching quotes for {exchange_segment}: {securities}")
             
             # Call Dhan API
             response = self.dhan.ticker_data(
                 securities={exchange_segment: securities}
             )
             
-            log.info(f"Raw response: {response}")
+            log.debug(f"Raw response: {response}")
             
             if not response or response.get("status") != "success":
                 log.error(f"API returned error: {response}")
@@ -335,7 +335,7 @@ class DataCollectionAgent:
                     "exchange_segment": exchange_segment
                 }
             
-            log.info(f"Processed quotes: {quotes}")
+            log.debug(f"Processed quotes: {quotes}")
             return quotes
             
         except Exception as e:

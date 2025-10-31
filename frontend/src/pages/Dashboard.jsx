@@ -386,7 +386,7 @@ export default function Dashboard() {
           icon={BarChart}
           label="Total P&L"
           value={`₹${statistics.total_pnl?.toFixed(2) || 0}`}
-          delta={statistics.total_pnl > 0 ? `+${statistics.total_pnl?.toFixed(2)}` : `${statistics.total_pnl?.toFixed(2)}`}
+	  delta={statistics?.total_pnl !== undefined && statistics?.total_pnl !== null ? (statistics.total_pnl > 0 ? `+${statistics.total_pnl.toFixed(2)}` : statistics.total_pnl < 0 ? `${statistics.total_pnl.toFixed(2)}`: undefined) : undefined}
           trend={statistics.total_pnl > 0 ? 'up' : 'down'}
         />
         <MetricCard

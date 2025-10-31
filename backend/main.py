@@ -2,12 +2,13 @@
 Trade Yoda - FastAPI Backend
 Production-ready API server for AI trading system
 """
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, WebSocket, Request, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import asyncio
 import sys
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -29,6 +30,27 @@ config.load_dhan_credentials()
 # Global orchestrator instance
 orchestrator: Optional[TradingOrchestrator] = None
 active_websockets: List[WebSocket] = []
+
+# Rate limiting cache
+_api_call_cache = {}
+_min_api_interval = 2.0  # Minimum 2 seconds between calls
+
+
+uvicorn_logger = logging.getLogger("uvicorn.access")
+
+async def rate_limit_check(api_name: str, min_interval: float = 2.0):
+    """Check and enforce rate limiting."""
+    last_call = _api_call_cache.get(api_name)
+
+    if last_call:
+        elapsed = (datetime.now() - last_call).total_seconds()
+        if elapsed < min_interval:
+            wait_time = min_interval - elapsed
+            await asyncio.sleep(wait_time)
+
+    _api_call_cache[api_name] = datetime.now()
+
+
 
 # ==================== UTILITY FUNCTIONS ====================
 
@@ -105,6 +127,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def suppress_frequent_endpoint_logs(request: Request, call_next):
+    """Suppress access logs for frequently polled endpoints."""
+
+    # List of endpoints to suppress logging
+    quiet_paths = [
+        "/api/market/live-price",
+        "/api/status",
+        "/health",
+        "/api/monitoring-status"
+    ]
+
+    # Check if this is a quiet endpoint
+    should_suppress = any(request.url.path == path for path in quiet_paths)
+
+    if should_suppress:
+        # Temporarily disable uvicorn access logging
+        original_level = uvicorn_logger.level
+        uvicorn_logger.setLevel(logging.WARNING)
+
+        response = await call_next(request)
+
+        # Restore original level
+        uvicorn_logger.setLevel(original_level)
+        return response
+
+    # Normal logging for other endpoints
+    return await call_next(request)
+
 
 # ==================== HEALTH CHECK ====================
 
@@ -439,24 +492,105 @@ async def get_trade_statistics():
 
 @app.get("/api/market/live-price")
 async def get_live_price():
-    """Get live Nifty Futures price."""
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
-    futures_id = str(config.NIFTY_FUTURES_SECURITY_ID)
-    live_data = orchestrator.data_agent.latest_data.get(futures_id, {})
-    
-    if not live_data:
-        raise HTTPException(status_code=404, detail="No live data available")
-    
-    return {
-        "security_id": futures_id,
-        "ltp": live_data.get('LTP'),
-        "high": live_data.get('high'),
-        "low": live_data.get('low'),
-        "volume": live_data.get('volume'),
-        "timestamp": datetime.now().isoformat()
-    }
+    """Get live price for active instrument with market status."""
+    try:
+        # ===== RATE LIMIT: 2 seconds minimum =====
+        await rate_limit_check("market_quotes", min_interval=2.0)
+        if not orchestrator:
+            return {
+                "success": False,
+                "message": "System not initialized"
+            }
+
+        # Get active instrument config
+        instrument = config.get_active_instrument()
+
+        # ===== CHECK MARKET HOURS =====
+        from src.utils.helpers import validate_market_hours
+        is_market_open = validate_market_hours()
+
+        # Fetch live quote
+        quotes = orchestrator.data_agent.fetch_market_quotes(
+            securities=[config.NIFTY_FUTURES_SECURITY_ID],
+            exchange_segment=config.NIFTY_FUTURES_EXCHANGE
+        )
+
+        live_quote = quotes.get(str(config.NIFTY_FUTURES_SECURITY_ID), {})
+        price = live_quote.get("LTP")
+
+        if not price:
+            # Return cached price if available
+            if orchestrator.analysis_cache and "current_price" in orchestrator.analysis_cache:
+                cached_price = orchestrator.analysis_cache["current_price"]
+                cached_time = orchestrator.analysis_cache.get("timestamp", datetime.now())
+
+                return {
+                    "success": True,
+                    "price": float(cached_price),
+                    "instrument": instrument["name"],
+                    "symbol": instrument["symbol"],
+                    "lot_size": instrument["lot_size"],
+                    "timestamp": cached_time.isoformat() if isinstance(cached_time, datetime) else cached_time,
+                    "cached": True,
+                    "market_open": is_market_open,
+                    "market_status": "OPEN" if is_market_open else "CLOSED",
+                    "message": "Market closed - showing last cached price"
+                }
+
+            return {
+                "success": False,
+                "message": "No price data available (market closed or system not running)",
+                "market_open": is_market_open,
+                "market_status": "CLOSED"
+            }
+
+        return {
+            "success": True,
+            "price": float(price),
+            "instrument": instrument["name"],
+            "symbol": instrument["symbol"],
+            "lot_size": instrument["lot_size"],
+            "timestamp": datetime.now().isoformat(),
+            "cached": False,
+            "market_open": is_market_open,
+            "market_status": "OPEN" if is_market_open else "CLOSED"
+        }
+
+    except Exception as e:
+        log.error(f"Live price API error: {e}")
+        import traceback
+        log.error(traceback.format_exc())
+
+        return {
+            "success": False,
+            "message": f"Error fetching live price: {str(e)}",
+            "market_open": False,
+            "market_status": "ERROR"
+        }
+
+
+@app.get("/api/market/active-instrument")
+async def get_active_instrument():
+    """Get active instrument details."""
+    try:
+        instrument = config.get_active_instrument()
+        
+        return {
+            "success": True,
+            "name": instrument["name"],
+            "symbol": instrument["symbol"],
+            "lot_size": instrument["lot_size"],
+            "expiry_type": instrument["expiry_type"],
+            "expiry_day": instrument["expiry_day"],
+            "security_id": config.NIFTY_FUTURES_SECURITY_ID,
+            "exchange": config.NIFTY_FUTURES_EXCHANGE
+        }
+        
+    except Exception as e:
+        log.error(f"Active instrument API error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 # ==================== CONFIGURATION ENDPOINTS ====================
 
@@ -825,6 +959,75 @@ async def test_dhan_connection():
             "success": False,
             "message": message,
             "details": str(e)
+        }
+
+# ==================== LOGGING ENDPOINT  ====================
+from src.utils.logger import logger
+
+@app.post("/api/admin/log-level")
+async def set_log_level(request: dict):
+    """
+    Dynamically change log level without restart.
+
+    Body: {"level": "DEBUG" | "INFO" | "WARNING" | "ERROR"}
+    """
+    try:
+        level = request.get("level", "INFO").upper()
+
+        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if level not in valid_levels:
+            raise HTTPException(status_code=400, detail=f"Invalid level. Choose from: {valid_levels}")
+
+        # Remove existing handlers
+        logger.remove()
+
+        # Add new handler with specified level
+        logger.add(
+            sys.stdout,
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+            level=level,
+            colorize=True
+        )
+
+        # File handler (always DEBUG)
+        logger.add(
+            "logs/tradeyoda_{time:YYYY-MM-DD}.log",
+            rotation="1 day",
+            retention="30 days",
+            level="DEBUG",
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+        )
+
+        log.info(f"✅ Log level changed to: {level}")
+
+        return {
+            "success": True,
+            "level": level,
+            "message": f"Log level changed to {level}"
+        }
+
+    except Exception as e:
+        log.error(f"Failed to change log level: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/log-level")
+async def get_log_level():
+    """Get current log level."""
+    # Get the first handler's level
+    try:
+        import logging
+        current_level = logging.getLevelName(logger._core.min_level)
+
+        return {
+            "success": True,
+            "level": current_level,
+            "available_levels": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
         }
 
 

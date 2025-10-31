@@ -49,6 +49,19 @@ class Config:
     ZONE_TIMEFRAME: int = int(os.getenv("ZONE_TIMEFRAME", "15"))
     TRADE_TIMEFRAME: int = int(os.getenv("TRADE_TIMEFRAME", "5"))
     ZONE_REFRESH_INTERVAL: int = int(os.getenv("ZONE_REFRESH_INTERVAL", "15"))
+    
+    # ===== TRADE MANAGEMENT PARAMETERS =====
+    # Maximum trades per day
+    MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", "5"))
+
+    # Cooldown period before trading same zone again (minutes)
+    ZONE_COOLDOWN_MINUTES = int(os.getenv("ZONE_COOLDOWN_MINUTES", "15"))
+
+    # Tolerance for duplicate zone detection (percentage)
+    DUPLICATE_ZONE_TOLERANCE = float(os.getenv("DUPLICATE_ZONE_TOLERANCE", "0.1"))
+
+    # Maximum concurrent positions
+    MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", "3"))
 
     # ==================== INSTRUMENT SELECTION ====================
     # User can select: NIFTY or BANKNIFTY

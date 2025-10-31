@@ -32,6 +32,8 @@ export const getTradeStatistics = () => api.get('/api/trades/statistics')
 
 // Market data endpoints
 export const getLivePrice = () => api.get('/api/market/live-price')
+export const getActiveInstrument = () => api.get('/api/market/active-instrument')  // ← ADD THIS
+
 
 // Continuous monitoring endpoints
 export const startContinuousMonitoring = () => api.post('/api/start-continuous')
