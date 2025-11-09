@@ -45,6 +45,11 @@ app.add_middleware(
 UPLOADS_DIR = Path("./uploads")
 UPLOADS_DIR.mkdir(exist_ok=True)
 
+# Admin panel static files
+ADMIN_PANEL_DIR = Path("./admin-panel/build")
+if ADMIN_PANEL_DIR.exists():
+    app.mount("/admin", StaticFiles(directory=str(ADMIN_PANEL_DIR), html=True), name="admin")
+
 # ==================== PYDANTIC MODELS ====================
 
 class LicenseCreateRequest(BaseModel):
