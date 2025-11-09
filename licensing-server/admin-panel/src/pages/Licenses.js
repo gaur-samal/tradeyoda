@@ -326,13 +326,22 @@ const Licenses = () => {
       <Table
         dataSource={filteredLicenses}
         columns={columns}
-        rowKey="id"
+        rowKey="license_key"
         loading={loading}
         scroll={{ x: 1500 }}
+        rowSelection={{
+          selectedRowKeys,
+          onChange: setSelectedRowKeys,
+          selections: [
+            Table.SELECTION_ALL,
+            Table.SELECTION_INVERT,
+            Table.SELECTION_NONE,
+          ],
+        }}
         pagination={{
           pageSize: 20,
           showSizeChanger: true,
-          showTotal: (total) => `Total ${total} licenses`,
+          showTotal: (total) => `Total ${total} licenses (${selectedRowKeys.length} selected)`,
         }}
       />
 
