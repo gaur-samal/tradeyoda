@@ -22,7 +22,14 @@ import {
   StopOutlined,
   CopyOutlined,
 } from '@ant-design/icons';
-import { getAllLicenses, createLicense, getLicenseDetails, revokeLicense } from '../services/api';
+import {
+  getAllLicenses,
+  createLicense,
+  getLicenseDetails,
+  revokeLicense,
+  deleteLicense,
+  bulkDeleteLicenses,
+} from '../services/api';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
