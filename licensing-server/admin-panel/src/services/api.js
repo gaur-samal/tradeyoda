@@ -28,6 +28,14 @@ export const revokeLicense = (licenseKey) => {
   return api.post(`/api/admin/licenses/${licenseKey}/revoke`);
 };
 
+export const deleteLicense = (licenseKey) => {
+  return api.delete(`/api/admin/licenses/${licenseKey}`);
+};
+
+export const bulkDeleteLicenses = (licenseKeys) => {
+  return api.post('/api/admin/licenses/bulk-delete', { license_keys: licenseKeys });
+};
+
 // ==================== OPENAI KEY ENDPOINTS ====================
 
 export const addOpenAIKey = (data) => {
