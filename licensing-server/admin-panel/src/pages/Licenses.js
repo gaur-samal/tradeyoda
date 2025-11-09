@@ -42,6 +42,7 @@ const Licenses = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [detailsDrawerVisible, setDetailsDrawerVisible] = useState(false);
   const [selectedLicense, setSelectedLicense] = useState(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [form] = Form.useForm();
 
   useEffect(() => {
