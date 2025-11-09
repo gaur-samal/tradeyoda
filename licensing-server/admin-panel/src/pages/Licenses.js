@@ -291,6 +291,20 @@ const Licenses = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h1>📋 License Management</h1>
         <Space>
+          {selectedRowKeys.length > 0 && (
+            <Popconfirm
+              title={`Delete ${selectedRowKeys.length} selected license(s)?`}
+              description="This action cannot be undone!"
+              onConfirm={handleBulkDelete}
+              okText="Yes, Delete All"
+              cancelText="Cancel"
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger icon={<StopOutlined />}>
+                Delete Selected ({selectedRowKeys.length})
+              </Button>
+            </Popconfirm>
+          )}
           <Button icon={<ReloadOutlined />} onClick={fetchLicenses}>
             Refresh
           </Button>
