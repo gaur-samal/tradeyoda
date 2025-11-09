@@ -114,6 +114,35 @@ const Licenses = () => {
     }
   };
 
+  const handleDelete = async (licenseKey) => {
+    try {
+      await deleteLicense(licenseKey);
+      message.success('License deleted successfully');
+      fetchLicenses();
+      setSelectedRowKeys(selectedRowKeys.filter(key => key !== licenseKey));
+    } catch (error) {
+      message.error('Failed to delete license');
+      console.error(error);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('Please select licenses to delete');
+      return;
+    }
+
+    try {
+      const response = await bulkDeleteLicenses(selectedRowKeys);
+      message.success(`${response.data.deleted_count} license(s) deleted successfully`);
+      setSelectedRowKeys([]);
+      fetchLicenses();
+    } catch (error) {
+      message.error('Failed to delete licenses');
+      console.error(error);
+    }
+  };
+
   const handleSearch = (value) => {
     const filtered = licenses.filter(
       (license) =>
