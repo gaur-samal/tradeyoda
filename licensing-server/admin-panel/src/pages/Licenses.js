@@ -247,6 +247,7 @@ const Licenses = () => {
       title: 'Actions',
       key: 'actions',
       fixed: 'right',
+      width: 280,
       render: (_, record) => (
         <Space>
           <Button
@@ -268,6 +269,18 @@ const Licenses = () => {
               </Button>
             </Popconfirm>
           )}
+          <Popconfirm
+            title="Are you sure you want to DELETE this license permanently?"
+            description="This action cannot be undone!"
+            onConfirm={() => handleDelete(record.license_key)}
+            okText="Yes, Delete"
+            cancelText="Cancel"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="link" danger>
+              Delete
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },
