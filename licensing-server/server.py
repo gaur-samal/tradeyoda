@@ -663,6 +663,89 @@ async def get_statistics(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/admin/licenses/{license_key}")
+async def delete_license(
+    license_key: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a license permanently.
+    Admin endpoint - use with caution!
+    """
+    try:
+        license = db.query(License).filter(
+            License.license_key == license_key
+        ).first()
+        
+        if not license:
+            raise HTTPException(status_code=404, detail="License not found")
+        
+        # Delete associated validation logs first (foreign key constraint)
+        db.query(ValidationLog).filter(
+            ValidationLog.license_key == license_key
+        ).delete()
+        
+        # Delete the license
+        db.delete(license)
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"License {license_key} deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/licenses/bulk-delete")
+async def bulk_delete_licenses(
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete multiple licenses at once.
+    Admin endpoint - use with caution!
+    """
+    try:
+        license_keys = request.get("license_keys", [])
+        
+        if not license_keys:
+            raise HTTPException(status_code=400, detail="No license keys provided")
+        
+        deleted_count = 0
+        
+        for license_key in license_keys:
+            license = db.query(License).filter(
+                License.license_key == license_key
+            ).first()
+            
+            if license:
+                # Delete validation logs
+                db.query(ValidationLog).filter(
+                    ValidationLog.license_key == license_key
+                ).delete()
+                
+                # Delete license
+                db.delete(license)
+                deleted_count += 1
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "deleted_count": deleted_count,
+            "message": f"Deleted {deleted_count} license(s)"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ==================== RUN SERVER ====================
 
 if __name__ == "__main__":
