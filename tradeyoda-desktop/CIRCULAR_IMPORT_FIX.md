@@ -129,10 +129,25 @@ def __init__(self, csv_path=None):
 
 ## Key Principles
 
-1. **Lazy Import:** Import `desktop_config` inside functions, not at module level
-2. **Fallback:** Always provide a fallback if import fails
-3. **Try-Except:** Wrap imports in try-except for safety
-4. **Global Cache:** Use global variable to cache the loaded module (in config.py)
+1. **Direct Module Loading:** Use `importlib.util` to load module without executing package `__init__.py`
+2. **Lazy Import:** Import `desktop_config` inside functions, not at module level
+3. **Fallback:** Always provide a fallback if import fails
+4. **Try-Except:** Wrap imports in try-except for safety
+5. **Global Cache:** Use global variable to cache the loaded module (in config.py)
+
+## Why This Works
+
+```python
+# ❌ This triggers src/utils/__init__.py → logger → config (CIRCULAR)
+from src.utils.desktop_config import desktop_config
+
+# ✅ This loads desktop_config.py directly, bypassing __init__.py
+import importlib.util
+spec = importlib.util.spec_from_file_location("module", "path/to/desktop_config.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+desktop_config = module.desktop_config
+```
 
 ## Verification
 
