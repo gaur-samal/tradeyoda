@@ -378,6 +378,9 @@ const Licenses = () => {
           <Form.Item name="notes" label="Notes">
             <Input.TextArea rows={3} placeholder="Optional notes about this license" />
           </Form.Item>
+          <Form.Item name="never_expires" valuePropName="checked">
+            <Checkbox>Never Expires (Lifetime License)</Checkbox>
+          </Form.Item>
           <Form.Item>
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
               <Button onClick={() => setModalVisible(false)}>Cancel</Button>
