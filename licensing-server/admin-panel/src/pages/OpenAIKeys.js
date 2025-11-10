@@ -200,7 +200,7 @@ const OpenAIKeys = () => {
             <Select placeholder="Select or enter model name">
               <Option value="gpt-4o-mini">gpt-4o-mini</Option>
               <Option value="gpt-4o">gpt-4o</Option>
-              <Option value="gpt-5">gpt-5</Option>
+              <Option value="gpt-4.1">gpt-4.1</Option>
             </Select>
           </Form.Item>
           <Form.Item>
