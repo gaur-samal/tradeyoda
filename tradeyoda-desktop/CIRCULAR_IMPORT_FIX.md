@@ -81,9 +81,16 @@ def __init__(self, ...):
 def __init__(self, ...):
     if cache_dir is None:
         try:
-            from src.utils.desktop_config import desktop_config
-            cache_dir = desktop_config.cache_dir
-        except ImportError:
+            # Import directly without triggering package __init__
+            import importlib.util
+            desktop_config_path = Path(__file__).parent / 'desktop_config.py'
+            
+            spec = importlib.util.spec_from_file_location("desktop_config_module", str(desktop_config_path))
+            desktop_config_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(desktop_config_module)
+            
+            cache_dir = desktop_config_module.desktop_config.cache_dir
+        except Exception:
             cache_dir = Path.home() / ".tradeyoda"
 ```
 
@@ -103,10 +110,20 @@ def __init__(self, csv_path=None):
 def __init__(self, csv_path=None):
     if csv_path is None:
         try:
-            from src.utils.desktop_config import desktop_config
+            # Import directly without triggering package __init__
+            import importlib.util
+            desktop_config_path = Path(__file__).parent / 'desktop_config.py'
+            
+            spec = importlib.util.spec_from_file_location("desktop_config_module", str(desktop_config_path))
+            desktop_config_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(desktop_config_module)
+            
+            desktop_config = desktop_config_module.desktop_config
             if desktop_config.is_desktop_mode:
                 csv_path = desktop_config.scrip_master_file
-        except ImportError:
+            else:
+                csv_path = Path(__file__).parent.parent.parent / "api-scrip-master.csv"
+        except Exception:
             csv_path = Path(__file__).parent.parent.parent / "api-scrip-master.csv"
 ```
 
