@@ -21,7 +21,13 @@ config.py
 The issue was importing `desktop_config` at the module level in `config.py`, which triggered the import of `src.utils.__init__.py`, which in turn imports `logger.py`, and logger imports back to `config.py`.
 
 ## Solution
-Implemented **lazy imports** for `desktop_config` in all affected modules:
+Implemented **direct module loading with importlib** to bypass package `__init__.py` that triggers circular imports.
+
+### Root Cause Detail
+When we do `from src.utils.desktop_config import desktop_config`, Python executes `src/utils/__init__.py` first, which imports `logger.py`, which imports `config.py` → **Circular!**
+
+### Solution: Direct Module Import
+Use `importlib.util` to load `desktop_config.py` directly without executing package `__init__.py`.
 
 ### 1. Fixed `src/config.py`
 **Before:**
@@ -38,8 +44,20 @@ def _get_desktop_config():
     """Lazy load desktop config to avoid circular imports."""
     global _desktop_config
     if _desktop_config is None:
-        from src.utils.desktop_config import desktop_config
-        _desktop_config = desktop_config
+        # Import directly without triggering src.utils.__init__.py
+        import importlib.util
+        import os
+        
+        # Get the path to desktop_config.py
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        desktop_config_path = os.path.join(current_dir, 'utils', 'desktop_config.py')
+        
+        # Load module directly
+        spec = importlib.util.spec_from_file_location("desktop_config_module", desktop_config_path)
+        desktop_config_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(desktop_config_module)
+        
+        _desktop_config = desktop_config_module.desktop_config
     return _desktop_config
 
 def _initialize_paths():
