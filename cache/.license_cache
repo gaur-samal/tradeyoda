@@ -1,0 +1,24 @@
+{
+  "validation": {
+    "success": true,
+    "valid": true,
+    "tier": "PRO",
+    "openai_key": "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",
+    "openai_model": "gpt-4.1",
+    "features": {
+      "zone_analysis": true,
+      "manual_trading": true,
+      "auto_trading": true,
+      "openai_model": "gpt-4.1",
+      "support_level": "premium_oncall",
+      "expires": true,
+      "expiry_days": 365
+    },
+    "expires_at": null,
+    "user_email": "gaur.samal@gmail.com",
+    "user_name": "gaur samal",
+    "validation_count": 2,
+    "cache_until": "2025-11-11T05:34:54.963014"
+  },
+  "cached_at": "2025-11-10T05:34:54.964519"
+}

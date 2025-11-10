@@ -18,9 +18,10 @@ import {
 import MetricCard from '../components/MetricCard'
 import LivePriceCard from '../components/LivePriceCard'
 import ZoneCard from '../components/ZoneCard'
+import api from '../utils/api'
 
 export default function Dashboard() {
-  // Use global state from Zustand (includes continuousMode)
+  // Use global state from Zustand
   const { 
     isRunning, 
     setIsRunning, 
@@ -36,6 +37,11 @@ export default function Dashboard() {
   const [analysisLoading, setAnalysisLoading] = useState(false)
   const [tradeLoading, setTradeLoading] = useState(false)
   
+  // ===== NEW: Active trades and P&L from Dhan =====
+  const [activeTrades, setActiveTrades] = useState([])
+  const [pnlData, setPnlData] = useState(null)
+  const [tradingMode, setTradingMode] = useState('paper') // 'paper' or 'live'
+  
   // Connect WebSocket
   useWebSocket()
   
@@ -44,7 +50,29 @@ export default function Dashboard() {
     fetchStatus()
     fetchStatistics()
     fetchMonitoringStatus()
+    fetchActiveTradesAndPnl() // Initial fetch
+    
+    // Poll every 60 seconds
+    const interval = setInterval(fetchActiveTradesAndPnl, 60000)
+    return () => clearInterval(interval)
   }, [])
+  
+  // ===== NEW: Fetch active trades and P&L =====
+  const fetchActiveTradesAndPnl = async () => {
+    try {
+      // Fetch active trades
+      const { data: tradesData } = await api.get('/api/trades/active')
+      setActiveTrades(tradesData.trades || [])
+      setTradingMode(tradesData.mode || 'paper')
+      
+      // Fetch P&L
+      const { data: pnl } = await api.get('/api/pnl/total')
+      setPnlData(pnl)
+      
+    } catch (error) {
+      console.error('Failed to fetch trades/P&L:', error)
+    }
+  }
   
   const fetchStatus = async () => {
     try {
@@ -80,6 +108,7 @@ export default function Dashboard() {
       await startTrading()
       setIsRunning(true)
       toast.success('🚀 Trade Yoda activated!', { duration: 3000 })
+      fetchActiveTradesAndPnl() // Refresh data
     } catch (error) {
       console.error('Failed to start:', error)
       toast.error('Failed to start system: ' + (error.response?.data?.error || error.message))
@@ -91,7 +120,6 @@ export default function Dashboard() {
   const handleStop = async () => {
     setLoading(true)
     try {
-      // Stop continuous mode first if active
       if (continuousMode) {
         await stopContinuousMonitoring()
         setContinuousMode(false)
@@ -99,6 +127,7 @@ export default function Dashboard() {
       await stopTrading()
       setIsRunning(false)
       toast.success('⏹️ Trade Yoda stopped', { duration: 3000 })
+      fetchActiveTradesAndPnl() // Refresh data
     } catch (error) {
       console.error('Failed to stop:', error)
       toast.error('Failed to stop system: ' + (error.response?.data?.error || error.message))
@@ -151,92 +180,90 @@ export default function Dashboard() {
     const loadingToast = toast.loading('Running zone analysis...')
     
     try {
-        const { data } = await runZoneAnalysis()
-        
-        if (data.success) {
+      const { data } = await runZoneAnalysis()
+      
+      if (data.success) {
         const demandCount = data.data?.zones?.demand_zones?.length || 0
         const supplyCount = data.data?.zones?.supply_zones?.length || 0
         
         toast.success(
-            `✅ Zone analysis complete!\n\nFound:\n• ${demandCount} demand zones\n• ${supplyCount} supply zones`,
-            { duration: 5000, id: loadingToast }
+          `✅ Zone analysis complete!\n\nFound:\n• ${demandCount} demand zones\n• ${supplyCount} supply zones`,
+          { duration: 5000, id: loadingToast }
         )
         fetchStatistics()
-        } else {
-        // Use regular toast with custom style for info
+      } else {
         toast(data.message || 'No zones identified', { 
-            id: loadingToast,
-            icon: 'ℹ️',
-            duration: 5000,
-            style: {
+          id: loadingToast,
+          icon: 'ℹ️',
+          duration: 5000,
+          style: {
             background: '#1f2937',
             border: '1px solid #3b82f6',
             color: '#fff',
-            }
+          }
         })
-        }
+      }
     } catch (error) {
-        console.error('Failed to run analysis:', error)
-        
-        const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
-        
-        if (errorMsg.includes('market hours') || errorMsg.includes('Outside market')) {
+      console.error('Failed to run analysis:', error)
+      
+      const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
+      
+      if (errorMsg.includes('market hours') || errorMsg.includes('Outside market')) {
         toast.error(
-            '⏰ Outside Market Hours\n\nZone analysis can only run during:\n• Monday to Friday\n• 9:15 AM to 3:30 PM IST\n\nPlease try again during trading hours.',
-            { duration: 6000, id: loadingToast }
+          '⏰ Outside Market Hours\n\nZone analysis can only run during:\n• Monday to Friday\n• 9:15 AM to 3:30 PM IST\n\nPlease try again during trading hours.',
+          { duration: 6000, id: loadingToast }
         )
-        } else {
+      } else {
         toast.error('Analysis failed: ' + errorMsg, { id: loadingToast })
-        }
+      }
     } finally {
-        setAnalysisLoading(false)
+      setAnalysisLoading(false)
     }
-  } 
+  }
+  
   const handleTradeIdentification = async () => {
     setTradeLoading(true)
     const loadingToast = toast.loading('Identifying trade opportunities...')
     
     try {
-        const { data } = await runTradeIdentification()
-        
-        if (data.success) {
+      const { data } = await runTradeIdentification()
+      
+      if (data.success) {
         toast.success(
-            '✅ Trade identified and executed!\n\nCheck the Trades page for details.',
-            { duration: 5000, id: loadingToast }
+          '✅ Trade identified and executed!\n\nCheck the Trades page for details.',
+          { duration: 5000, id: loadingToast }
         )
         fetchStatistics()
-        } else {
-        // Use regular toast with custom style for info
+        fetchActiveTradesAndPnl() // Refresh active trades
+      } else {
         toast(data.message || 'No trade opportunities found at this time.', { 
-            id: loadingToast,
-            icon: 'ℹ️',
-            duration: 5000,
-            style: {
+          id: loadingToast,
+          icon: 'ℹ️',
+          duration: 5000,
+          style: {
             background: '#1f2937',
             border: '1px solid #3b82f6',
             color: '#fff',
-            }
+          }
         })
-        }
+      }
     } catch (error) {
-        console.error('Failed to identify trade:', error)
-        
-        const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
-        
-        if (errorMsg.includes('market hours') || errorMsg.includes('Outside market')) {
+      console.error('Failed to identify trade:', error)
+      
+      const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
+      
+      if (errorMsg.includes('market hours') || errorMsg.includes('Outside market')) {
         toast.error(
-            '⏰ Outside Market Hours\n\nTrade identification can only run during:\n• Monday to Friday\n• 9:15 AM to 3:30 PM IST\n\nPlease try again during trading hours.',
-            { duration: 6000, id: loadingToast }
+          '⏰ Outside Market Hours\n\nTrade identification can only run during:\n• Monday to Friday\n• 9:15 AM to 3:30 PM IST\n\nPlease try again during trading hours.',
+          { duration: 6000, id: loadingToast }
         )
-        } else {
+      } else {
         toast.error('Trade identification failed: ' + errorMsg, { id: loadingToast })
-        }
+      }
     } finally {
-        setTradeLoading(false)
+      setTradeLoading(false)
     }
   }
- 
-  const activeTrades = trades.filter(t => t.status === 'ACTIVE').length
   
   return (
     <div className="space-y-6">
@@ -280,6 +307,17 @@ export default function Dashboard() {
           <div>
             <h2 className="text-2xl font-bold mb-2">System Control</h2>
             <p className="text-gray-400">Manage Trade Yoda trading system</p>
+            
+            {/* ===== NEW: Trading Mode Badge ===== */}
+            <div className="mt-2">
+              <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
+                tradingMode === 'live' 
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/50' 
+                  : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/50'
+              }`}>
+                {tradingMode === 'live' ? '🔴 LIVE' : '📝 PAPER'} Trading
+              </span>
+            </div>
           </div>
           
           <div className="flex gap-4">
@@ -294,7 +332,6 @@ export default function Dashboard() {
               </button>
             ) : (
               <>
-                {/* Continuous Monitoring Toggle */}
                 {!continuousMode ? (
                   <button
                     onClick={handleStartContinuous}
@@ -360,17 +397,11 @@ export default function Dashboard() {
                 <span className="text-gray-300">No new trades after 3:00 PM</span>
               </div>
             </div>
-            <div className="mt-3 pt-3 border-t border-green-500/20">
-              <p className="text-xs text-gray-400">
-                💡 <strong>Tip:</strong> System will automatically monitor and execute trades based on your configured parameters. 
-                Monitor the "Trades" page for real-time updates.
-              </p>
-            </div>
           </motion.div>
         )}
       </div>
       
-      {/* Metrics */}
+      {/* ===== UPDATED: Metrics with real data ===== */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
           icon={Activity}
@@ -380,14 +411,14 @@ export default function Dashboard() {
         <MetricCard
           icon={TrendingUp}
           label="Active Trades"
-          value={activeTrades}
+          value={activeTrades.length}
         />
         <MetricCard
           icon={BarChart}
           label="Total P&L"
-          value={`₹${statistics.total_pnl?.toFixed(2) || 0}`}
-	  delta={statistics?.total_pnl !== undefined && statistics?.total_pnl !== null ? (statistics.total_pnl > 0 ? `+${statistics.total_pnl.toFixed(2)}` : statistics.total_pnl < 0 ? `${statistics.total_pnl.toFixed(2)}`: undefined) : undefined}
-          trend={statistics.total_pnl > 0 ? 'up' : 'down'}
+          value={`₹${pnlData?.total_pnl?.toFixed(2) || '0.00'}`}
+          delta={pnlData?.total_pnl > 0 ? `+${pnlData.total_pnl.toFixed(2)}` : pnlData?.total_pnl < 0 ? `${pnlData.total_pnl.toFixed(2)}` : undefined}
+          trend={pnlData?.total_pnl > 0 ? 'up' : 'down'}
         />
         <MetricCard
           icon={Zap}
@@ -396,10 +427,39 @@ export default function Dashboard() {
         />
       </div>
       
+      {/* ===== NEW: P&L Details Card (if live trading) ===== */}
+      {tradingMode === 'live' && pnlData && (
+        <div className="card p-6 bg-gradient-to-br from-purple-500/5 to-blue-500/5 border-purple-500/20">
+          <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
+            💰 P&L Breakdown
+          </h3>
+          <div className="grid md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-gray-400 mb-1">Realized P&L</p>
+              <p className={`text-2xl font-bold ${pnlData.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                ₹{pnlData.realized_pnl?.toFixed(2)}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-400 mb-1">Unrealized P&L</p>
+              <p className={`text-2xl font-bold ${pnlData.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                ₹{pnlData.unrealized_pnl?.toFixed(2)}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-400 mb-1">Total P&L</p>
+              <p className={`text-2xl font-bold ${pnlData.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                ₹{pnlData.total_pnl?.toFixed(2)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Live Price */}
       <LivePriceCard />
       
-      {/* Manual Analysis Actions (Only show if continuous mode is OFF) */}
+      {/* Manual Analysis Actions */}
       {!continuousMode && (
         <div className="grid md:grid-cols-2 gap-6">
           <motion.button
@@ -443,7 +503,7 @@ export default function Dashboard() {
               <h3 className="font-semibold text-lg mb-2">Automatic Mode Active</h3>
               <p className="text-gray-400 text-sm">
                 Manual zone analysis and trade identification buttons are disabled while continuous auto-trading is active. 
-                The system is automatically running these cycles in the background. Check the Analysis and Trades pages for updates.
+                The system is automatically running these cycles in the background.
               </p>
             </div>
           </div>

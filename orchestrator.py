@@ -240,6 +240,7 @@ class TradingOrchestrator:
             else:
                 if not validate_market_hours():
                     log.info("⏰ Outside market hours")
+                    return None
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=5)
                 log.info("Fetching FUTURES Data")
@@ -466,6 +467,7 @@ class TradingOrchestrator:
         try:
             if not validate_market_hours():
                 log.info("⏰ Outside market hours")
+                return None
 
             if not self.analysis_cache or \
                (datetime.now() - self.analysis_cache.get("timestamp", datetime.now())).seconds > 900:
@@ -811,21 +813,25 @@ class TradingOrchestrator:
             log.info(f"📤 Placing LIVE order")
             
             order_params = {
-                "security_id": str(security_id),
-                "exchange_segment": "NSE_FNO",
-                "transaction_type": "BUY",
-                "order_type": "LIMIT",
-                "product_type": "INTRA",
+                "securityId": str(security_id),
+                "exchangeSegment": "NSE_FNO",
+                "transactionType": "BUY",
+                "orderType": "LIMIT",
+                "productType": "INTRADAY",
                 "quantity": self.config.ORDER_QUANTITY * instrument["lot_size"],
-                "entry_price": setup["entry_premium"],
-                "stop_loss": setup["stop_loss_premium"],
-                "target_price": setup["target_premium"],
-                "use_super_order": self.config.USE_SUPER_ORDER,
-                "correlation_id": f"TRADE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                "price": setup.get("entry_premium") or setup.get("entry_price"),
+                "stopLossPrice": setup.get("stop_loss_premium") or setup.get("stop_loss"),
+                "targetPrice": setup.get("target_premium") or setup.get("target_price"),
+                #"entry_price": setup["entry_premium"],
+                #"stop_loss": setup["stop_loss_premium"],
+                #"target_price": setup["target_premium"],
+                "correlationId": f"TRADE_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "trailingJump": 0
             }
             
-            result = self.execution_agent.place_bracket_or_super_order(order_params)
-            
+            #result = self.execution_agent.place_bracket_or_super_order(order_params)
+            result = self.execution_agent.place_super_order(order_params)
+
             if result["success"]:
                 record["order_ids"] = result
                 record["status"] = "ACTIVE"
@@ -844,7 +850,193 @@ class TradingOrchestrator:
             return {"success": False, "error": str(e)}
 
     def get_active_trades(self) -> list:
-        return self.active_trades
+        """
+        Get active trades from Dhan + local memory.
+        
+        For live trading: Fetches actual positions from Dhan
+        For paper trading: Returns local trades
+        """
+        if self.config.USE_SANDBOX:
+            # Paper trading - return local trades
+            return self.active_trades
+        else:
+            # Live trading - fetch from Dhan
+            return self._fetch_trades_from_dhan()   
+    
+    def _fetch_trades_from_dhan(self) -> list:
+        """Fetch active positions and orders from Dhan API."""
+        try:
+            trades = []
+            
+            # Get open positions using data agent
+            positions = self.data_agent.get_positions()
+            
+            if positions.get("status") == "success":
+                for position in positions.get("data", []):
+                    if position.get("netQty") != 0:
+                        trade = self._convert_position_to_trade(position)
+                        trades.append(trade)
+            
+            # Get open orders using data agent
+            orders = self.data_agent.get_orders()
+            
+            if orders.get("status") == "success":
+                for order in orders.get("data", []):
+                    if order.get("orderStatus") in ["PENDING", "TRANSIT"]:
+                        trade = self._convert_order_to_trade(order)
+                        trades.append(trade)
+            
+            log.info(f"📊 Fetched {len(trades)} active trades from Dhan")
+            return trades
+            
+        except Exception as e:
+            log.error(f"Error fetching trades from Dhan: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+            return []
+
+
+    def _convert_position_to_trade(self, position: Dict) -> Dict:
+        """Convert Dhan position to trade format."""
+        try:
+            # Calculate P&L
+            buy_avg = float(position.get("buyAvg", 0))
+            sell_avg = float(position.get("sellAvg", 0))
+            net_qty = int(position.get("netQty", 0))
+
+            if net_qty > 0:
+                # Long position
+                current_price = float(position.get("lastPrice", 0))
+                pnl = (current_price - buy_avg) * net_qty
+            else:
+                # Short position
+                current_price = float(position.get("lastPrice", 0))
+                pnl = (sell_avg - current_price) * abs(net_qty)
+
+            return {
+                "trade_id": f"DHAN_{position.get('dhanClientId')}_{position.get('securityId')}",
+                "timestamp": position.get("updateTime"),
+                "symbol": position.get("tradingSymbol", "").split()[0],  # Extract base symbol
+                "strike": self._extract_strike_from_symbol(position.get("tradingSymbol", "")),
+                "option_type": self._extract_option_type_from_symbol(position.get("tradingSymbol", "")),
+                "expiry": position.get("expiryDate"),
+                "security_id": position.get("securityId"),
+
+                # Prices
+                "entry_price": buy_avg if net_qty > 0 else sell_avg,
+                "current_price": current_price,
+                "quantity": abs(net_qty),
+
+                # P&L
+                "pnl": pnl,
+                "realizedProfit": float(position.get("realizedProfit", 0)),
+
+                # Status
+                "status": "ACTIVE",
+                "direction": "LONG" if net_qty > 0 else "SHORT",
+
+                # Raw data for reference
+                "_raw_position": position
+            }
+        except Exception as e:
+            log.error(f"Error converting position: {e}")
+            return {}
+    
+    def _convert_order_to_trade(self, order: Dict) -> Dict:
+        """Convert Dhan order to trade format."""
+        try:
+            return {
+                "trade_id": f"ORDER_{order.get('orderId')}",
+                "timestamp": order.get("createTime"),
+                "symbol": order.get("tradingSymbol", "").split()[0],
+                "strike": self._extract_strike_from_symbol(order.get("tradingSymbol", "")),
+                "option_type": self._extract_option_type_from_symbol(order.get("tradingSymbol", "")),
+                "security_id": order.get("securityId"),
+
+                # Order details
+                "entry_price": float(order.get("price", 0)),
+                "quantity": int(order.get("quantity", 0)),
+                "order_id": order.get("orderId"),
+
+                # Status
+                "status": "PENDING",
+                "order_status": order.get("orderStatus"),
+                "direction": order.get("transactionType"),
+
+                # Raw data
+                "_raw_order": order
+            }
+        except Exception as e:
+            log.error(f"Error converting order: {e}")
+            return {}
+
+    def _extract_strike_from_symbol(self, symbol: str) -> float:
+        """Extract strike price from trading symbol."""
+        try:
+            # Example: "NIFTY 31 OCT 24 26000 CE" -> 26000
+            import re
+            match = re.search(r'(\d+)\s+(CE|PE)', symbol)
+            if match:
+                return float(match.group(1))
+            return 0
+        except:
+            return 0
+
+    def _extract_option_type_from_symbol(self, symbol: str) -> str:
+        """Extract option type from trading symbol."""
+        try:
+            if "CE" in symbol:
+                return "CALL"
+            elif "PE" in symbol:
+                return "PUT"
+            return "UNKNOWN"
+        except:
+            return "UNKNOWN"
+    
+    def get_total_pnl(self) -> Dict:
+        """Get total P&L from Dhan."""
+        try:
+            if self.config.USE_SANDBOX:
+                total_pnl = sum(trade.get("pnl", 0) for trade in self.active_trades)
+                return {
+                    "total_pnl": total_pnl,
+                    "realized_pnl": 0,
+                    "unrealized_pnl": total_pnl,
+                    "mode": "paper"
+                }
+            
+            # Live trading - fetch from Dhan using data agent
+            positions = self.data_agent.get_positions()
+            
+            if positions.get("status") == "success":
+                total_realized = 0
+                total_unrealized = 0
+                
+                for position in positions.get("data", []):
+                    total_realized += float(position.get("realizedProfit", 0))
+                    total_unrealized += float(position.get("unrealizedProfit", 0))
+                
+                total_pnl = total_realized + total_unrealized
+                
+                log.info(f"💰 Total P&L: ₹{total_pnl:.2f}")
+                
+                return {
+                    "total_pnl": total_pnl,
+                    "realized_pnl": total_realized,
+                    "unrealized_pnl": total_unrealized,
+                    "mode": "live"
+                }
+            
+            return {
+                "total_pnl": 0,
+                "realized_pnl": 0,
+                "unrealized_pnl": 0,
+                "error": "Failed to fetch positions"
+            }
+            
+        except Exception as e:
+            log.error(f"Error calculating P&L: {e}")
+            return {"total_pnl": 0, "error": str(e)}
 
     async def run_continuous_monitoring(self):
         """Run continuous monitoring with configurable intervals."""

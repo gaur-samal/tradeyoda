@@ -7,6 +7,7 @@ import asyncio
 import requests
 import queue
 import time
+from typing import Dict, Optional
 from src.utils.logger import log
 
 
@@ -16,36 +17,54 @@ class DataCollectionAgent:
     def __init__(self, dhan_context):
         self.dhan_context = dhan_context
         self.dhan = dhanhq(dhan_context)
-        #self.client_id = client_id
-        #self.access_token = access_token
-        #self.dhan = dhanhq(client_id, access_token)
         self.market_feed = None
         self.live_data_queue = queue.Queue()
         self.latest_data = {}
         self.is_running = False
         self.subscribed_instruments = []
+        
+        # ===== ADD CACHING =====
+        self._cache = {}
+        self._cache_ttl = {
+            'positions': 10,      # Cache positions for 10 seconds
+            'orders': 5,          # Cache orders for 5 seconds
+            'quotes': 3,          # Cache quotes for 3 seconds
+            'funds': 30,          # Cache funds for 30 seconds
+            'holdings': 60,       # Cache holdings for 60 seconds
+        }
+    
+    def _get_cached(self, key: str) -> Optional[Dict]:
+        """Get cached data if still valid."""
+        if key in self._cache:
+            data, timestamp = self._cache[key]
+            ttl = self._cache_ttl.get(key.split('_')[0], 5)
+            age = (datetime.now() - timestamp).total_seconds()
+            
+            if age < ttl:
+                log.debug(f"📦 Cache HIT for {key} (age: {age:.1f}s)")
+                return data
+            else:
+                log.debug(f"⏰ Cache EXPIRED for {key} (age: {age:.1f}s)")
+        
+        return None
+    
+    def _set_cache(self, key: str, data: Dict):
+        """Set cache data with timestamp."""
+        self._cache[key] = (data, datetime.now())
     
     def start_live_feed(self, instruments):
-        """
-        Start real-time market feed (WebSocket) v2.2.
-        
-        Args:
-            instruments: List of tuples [(exchange, security_id, marketfeed.Full)]
-        """
+        """Start real-time market feed (WebSocket) v2.2."""
         try:
             if self.is_running:
                 log.warning("Market feed already running")
                 return True
             
-            # Initialize updated MarketFeed
             self.market_feed = MarketFeed(
                 self.dhan_context,
-                #self.client_id,
-                #self.access_token,
                 instruments,
                 version="v2"
             )
-            # Start background thread with the correct pattern
+            
             feed_thread = threading.Thread(
                 target=self._market_feed_loop,
                 name="MarketFeedWorker",
@@ -67,7 +86,6 @@ class DataCollectionAgent:
         """Background thread for market feed with its own event loop."""
         log.info("🔌 Market feed thread started")
         
-        # Create a NEW event loop for this thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
@@ -75,10 +93,7 @@ class DataCollectionAgent:
             """Async worker that handles the feed."""
             while self.is_running:
                 try:
-                    # Connect
                     await self.market_feed.connect()
-                    
-                    # Get data
                     response = await self.market_feed.get_data()
                     
                     if response:
@@ -92,7 +107,6 @@ class DataCollectionAgent:
                         break
         
         try:
-            # Run in this thread's event loop
             loop.run_until_complete(feed_worker())
         except Exception as e:
             log.error(f"❌ Market feed thread error: {e}")
@@ -102,32 +116,24 @@ class DataCollectionAgent:
             loop.close()
             log.info("✅ Market feed thread stopped")
 
-
     def _process_market_data(self, data):
         """Process incoming market data."""
         try:
             if not data or not isinstance(data, dict):
                 return
 
-            # Extract security_id from response
             security_id = str(data.get("security_id", ""))
 
             if security_id:
-                # Add timestamp
                 data["received_at"] = datetime.now()
-
-                # Store in latest_data cache
                 self.latest_data[security_id] = data
-
-                # Put in queue for processing
                 self.live_data_queue.put(data)
 
-                # Log first few updates
                 if not hasattr(self, '_log_count'):
                     self._log_count = {}
 
                 count = self._log_count.get(security_id, 0)
-                if count < 5:  # Log first 5 messages
+                if count < 5:
                     log.info(f"📊 Market data [{security_id}]: Type={data.get('type')}, LTP={data.get('LTP', 'N/A')}")
                     self._log_count[security_id] = count + 1
 
@@ -164,13 +170,7 @@ class DataCollectionAgent:
         to_date=None,
         oi=False
     ):
-        """
-        Fetch historical intraday minute data using new v2.2 API.
-        
-        Added support:
-        - `oi` parameter for open interest
-        - from_date / to_date accepts ISO-format timestamps
-        """
+        """Fetch historical intraday minute data using new v2.2 API."""
         try:
             params = {
                 "security_id": security_id,
@@ -180,7 +180,7 @@ class DataCollectionAgent:
                 "to_date": to_date,
             }
             result = self.dhan.intraday_minute_data(**params)
-            #log.info(f"intraday_minute_data : {result}")
+            
             if not result or result.get("status") != "success":
                 return pd.DataFrame()
             
@@ -194,9 +194,7 @@ class DataCollectionAgent:
             return pd.DataFrame()
     
     def fetch_option_chain(self, security_id, exchange_segment, expiry_date, max_retries=3):
-        """
-        Fetch option chain with proper data transformation including Greeks.
-        """
+        """Fetch option chain with proper data transformation including Greeks."""
         for attempt in range(max_retries):
             try:
                 time.sleep(3)
@@ -211,8 +209,6 @@ class DataCollectionAgent:
                 )
                 
                 if chain and chain.get("status") == "success":
-                    # Extract nested data structure
-                    # Structure: {'data': {'data': {'last_price': X, 'oc': {strike: {ce/pe data}}}}}
                     outer_data = chain.get("data", {})
                     inner_data = outer_data.get("data", {})
                     option_chain_data = inner_data.get("oc", {})
@@ -222,7 +218,6 @@ class DataCollectionAgent:
                         log.warning("Empty option chain in response")
                         return pd.DataFrame()
                     
-                    # Transform nested dict to flat DataFrame
                     rows = []
                     for strike_str, strike_data in option_chain_data.items():
                         strike = float(strike_str)
@@ -230,35 +225,29 @@ class DataCollectionAgent:
                         ce_data = strike_data.get("ce", {})
                         pe_data = strike_data.get("pe", {})
                         
-                        # ===== EXTRACT GREEKS =====
                         call_greeks = ce_data.get('greeks', {})
                         put_greeks = pe_data.get('greeks', {})
                         
                         row = {
                             'strike': strike,
-                            
-                            # Call data
                             'call_oi': ce_data.get('oi', 0),
                             'call_volume': ce_data.get('volume', 0),
                             'call_iv': ce_data.get('implied_volatility', 0),
                             'call_ltp': ce_data.get('last_price', 0),
                             'call_oi_change': ce_data.get('oi', 0) - ce_data.get('previous_oi', 0),
-                            'call_greeks': call_greeks,  # ← ADD THIS
-                            
-                            # Put data
+                            'call_greeks': call_greeks,
                             'put_oi': pe_data.get('oi', 0),
                             'put_volume': pe_data.get('volume', 0),
                             'put_iv': pe_data.get('implied_volatility', 0),
                             'put_ltp': pe_data.get('last_price', 0),
                             'put_oi_change': pe_data.get('oi', 0) - pe_data.get('previous_oi', 0),
-                            'put_greeks': put_greeks,    # ← ADD THIS
+                            'put_greeks': put_greeks,
                         }
                         rows.append(row)
                     
                     df = pd.DataFrame(rows)
                     df = df.sort_values('strike')
                     
-                    # ===== LOG GREEKS AVAILABILITY =====
                     has_call_greeks = df['call_greeks'].apply(lambda x: isinstance(x, dict) and len(x) > 0).sum()
                     has_put_greeks = df['put_greeks'].apply(lambda x: isinstance(x, dict) and len(x) > 0).sum()
                     
@@ -268,7 +257,6 @@ class DataCollectionAgent:
                     log.info(f"   Strikes with call Greeks: {has_call_greeks}/{len(df)}")
                     log.info(f"   Strikes with put Greeks: {has_put_greeks}/{len(df)}")
                     
-                    # Log sample Greeks for debugging
                     if has_call_greeks > 0:
                         sample_strike = df[df['call_greeks'].apply(lambda x: isinstance(x, dict) and len(x) > 0)].iloc[0]
                         log.info(f"   Sample call Greeks at strike {sample_strike['strike']}: {sample_strike['call_greeks']}")
@@ -291,42 +279,38 @@ class DataCollectionAgent:
         
         return pd.DataFrame()
 
-
     def fetch_market_quotes(self, securities, exchange_segment="NSE_FNO"):
-        """
-        Fetch market quote data using SDK's ticker_data method.
-        
-        Args:
-            securities: List of security IDs (can be strings or ints)
-            exchange_segment: Exchange segment (default: NSE_FNO for Nifty Futures)
-        
-        Returns:
-            Dict with security_id as key and quote data as value
-        """
+        """Fetch market quote data with caching."""
         try:
-            # Convert securities to integers if they're strings
+            # Create cache key
+            cache_key = f"quotes_{exchange_segment}_{'_'.join(map(str, securities))}"
+            
+            # Check cache first
+            cached = self._get_cached(cache_key)
+            if cached is not None:
+                return cached
+            
+            # Fetch from API
             securities = [int(sec) if isinstance(sec, str) else sec for sec in securities]
             
             log.debug(f"Fetching quotes for {exchange_segment}: {securities}")
             
-            # Call Dhan API
             response = self.dhan.ticker_data(
                 securities={exchange_segment: securities}
             )
             
-            log.debug(f"Raw response: {response}")
-            
             if not response or response.get("status") != "success":
                 log.error(f"API returned error: {response}")
+                # Return cached data even if expired
+                if cache_key in self._cache:
+                    log.warning("⚠️ Using expired cache due to API error")
+                    return self._cache[cache_key][0]
                 return {}
             
-            # Extract nested data structure
-            # Response format: {'status': 'success', 'data': {'data': {'NSE_FNO': {'52168': {...}}}}}
             outer_data = response.get("data", {})
             inner_data = outer_data.get("data", {})
             exchange_data = inner_data.get(exchange_segment, {})
             
-            # Convert to our format: {security_id: {LTP: value, ...}}
             quotes = {}
             for sec_id_str, quote_data in exchange_data.items():
                 quotes[sec_id_str] = {
@@ -335,12 +319,187 @@ class DataCollectionAgent:
                     "exchange_segment": exchange_segment
                 }
             
+            # Cache the result
+            self._set_cache(cache_key, quotes)
+            
             log.debug(f"Processed quotes: {quotes}")
             return quotes
             
         except Exception as e:
             log.error(f"Market quote error: {str(e)}")
-            import traceback
-            log.error(traceback.format_exc())
+            # Try to return cached data
+            if 'cache_key' in locals() and cache_key in self._cache:
+                log.warning("⚠️ Using cached data due to exception")
+                return self._cache[cache_key][0]
             return {}
+
+    def get_positions(self) -> Dict:
+        """Get all positions from Dhan with caching."""
+        try:
+            cache_key = "positions_all"
+            
+            # Check cache
+            cached = self._get_cached(cache_key)
+            if cached is not None:
+                return cached
+            
+            # Fetch from API
+            positions = self.dhan.get_positions()
+            
+            if positions.get("status") == "success":
+                log.info(f"✅ Fetched {len(positions.get('data', []))} positions from Dhan")
+                self._set_cache(cache_key, positions)
+            else:
+                log.warning(f"⚠️ Failed to fetch positions: {positions.get('remarks')}")
+                # Return cached even if expired
+                if cache_key in self._cache:
+                    return self._cache[cache_key][0]
+            
+            return positions
+            
+        except Exception as e:
+            log.error(f"Error fetching positions: {e}")
+            # Return cached data if available
+            cache_key = "positions_all"
+            if cache_key in self._cache:
+                log.warning("⚠️ Using cached positions due to error")
+                return self._cache[cache_key][0]
+            return {
+                "status": "error",
+                "error": str(e),
+                "data": []
+            }
+
+    def get_orders(self) -> Dict:
+        """Get all orders from Dhan with caching."""
+        try:
+            cache_key = "orders_all"
+            
+            # Check cache
+            cached = self._get_cached(cache_key)
+            if cached is not None:
+                return cached
+            
+            # Fetch from API
+            orders = self.dhan.get_order_list()
+            
+            if orders.get("status") == "success":
+                log.info(f"✅ Fetched {len(orders.get('data', []))} orders from Dhan")
+                self._set_cache(cache_key, orders)
+            else:
+                log.warning(f"⚠️ Failed to fetch orders: {orders.get('remarks')}")
+                if cache_key in self._cache:
+                    return self._cache[cache_key][0]
+            
+            return orders
+            
+        except Exception as e:
+            log.error(f"Error fetching orders: {e}")
+            cache_key = "orders_all"
+            if cache_key in self._cache:
+                log.warning("⚠️ Using cached orders due to error")
+                return self._cache[cache_key][0]
+            return {
+                "status": "error",
+                "error": str(e),
+                "data": []
+            }
+
+    def get_trade_book(self, order_id: str) -> Dict:
+        """Get trade book for specific order."""
+        try:
+            trades = self.dhan.get_trade_book(order_id)
+            
+            if trades.get("status") == "success":
+                log.info(f"✅ Fetched trade book for order {order_id}")
+            
+            return trades
+            
+        except Exception as e:
+            log.error(f"Error fetching trade book: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "data": []
+            }
+
+    def get_fund_limits(self) -> Dict:
+        """Get fund limits with caching."""
+        try:
+            cache_key = "funds_limits"
+            
+            cached = self._get_cached(cache_key)
+            if cached is not None:
+                return cached
+            
+            funds = self.dhan.get_fund_limits()
+            
+            if funds.get("status") == "success":
+                log.info(f"✅ Fetched fund limits from Dhan")
+                self._set_cache(cache_key, funds)
+            else:
+                if cache_key in self._cache:
+                    return self._cache[cache_key][0]
+            
+            return funds
+            
+        except Exception as e:
+            log.error(f"Error fetching fund limits: {e}")
+            cache_key = "funds_limits"
+            if cache_key in self._cache:
+                return self._cache[cache_key][0]
+            return {
+                "status": "error",
+                "error": str(e),
+                "data": {}
+            }
+
+    def get_holdings(self) -> Dict:
+        """Get holdings from Dhan with caching."""
+        try:
+            cache_key = "holdings_all"
+            
+            cached = self._get_cached(cache_key)
+            if cached is not None:
+                return cached
+            
+            holdings = self.dhan.get_holdings()
+            
+            if holdings.get("status") == "success":
+                log.info(f"✅ Fetched {len(holdings.get('data', []))} holdings from Dhan")
+                self._set_cache(cache_key, holdings)
+            else:
+                if cache_key in self._cache:
+                    return self._cache[cache_key][0]
+            
+            return holdings
+            
+        except Exception as e:
+            log.error(f"Error fetching holdings: {e}")
+            cache_key = "holdings_all"
+            if cache_key in self._cache:
+                return self._cache[cache_key][0]
+            return {
+                "status": "error",
+                "error": str(e),
+                "data": []
+            }
+
+    def get_trade_history(self, from_date: str, to_date: str, page_number: int = 0) -> Dict:
+        """Get trade history for date range."""
+        try:
+            history = self.dhan.get_trade_history(from_date, to_date, page_number)
+            
+            if history.get("status") == "success":
+                log.info(f"✅ Fetched trade history from {from_date} to {to_date}")
+            
+            return history
+            
+        except Exception as e:
+            log.error(f"Error fetching trade history: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "data": []
+            }
 

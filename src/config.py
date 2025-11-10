@@ -8,14 +8,61 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Lazy import desktop_config to avoid circular imports
+# Import happens inside _initialize_paths() function
+_desktop_config = None
+
+def _get_desktop_config():
+    """Lazy load desktop config to avoid circular imports."""
+    global _desktop_config
+    if _desktop_config is None:
+        # Import directly without triggering src.utils.__init__.py
+        import importlib.util
+        import os
+
+        # Get the path to desktop_config.py
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        desktop_config_path = os.path.join(current_dir, 'utils', 'desktop_config.py')
+
+        # Load module directly
+        spec = importlib.util.spec_from_file_location("desktop_config_module", desktop_config_path)
+        desktop_config_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(desktop_config_module)
+
+        _desktop_config = desktop_config_module.desktop_config
+    return _desktop_config
+
+def _initialize_paths():
+    """Initialize base paths based on desktop mode."""
+    desktop_config = _get_desktop_config()
+
+    if desktop_config.is_desktop_mode:
+        return (
+            desktop_config.app_data_dir,
+            desktop_config.data_dir,
+            desktop_config.logs_dir
+        )
+    else:
+        # Web/dev mode - use current directory
+        base_dir = Path(__file__).parent.parent
+        data_dir = base_dir / "data"
+        logs_dir = base_dir / "logs"
+        # Ensure directories exist
+        data_dir.mkdir(exist_ok=True)
+        logs_dir.mkdir(exist_ok=True)
+        return base_dir, data_dir, logs_dir
+
+# Initialize paths
+BASE_DIR, DATA_DIR, LOGS_DIR = _initialize_paths()
+
 # Base paths
-BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
-LOGS_DIR = BASE_DIR / "logs"
+#BASE_DIR = Path(__file__).parent.parent
+#DATA_DIR = BASE_DIR / "data"
+#LOGS_DIR = BASE_DIR / "logs"
 
 # Ensure directories exist
-DATA_DIR.mkdir(exist_ok=True)
-LOGS_DIR.mkdir(exist_ok=True)
+#DATA_DIR.mkdir(exist_ok=True)
+#LOGS_DIR.mkdir(exist_ok=True)
 
 
 class Config:
@@ -28,6 +75,19 @@ class Config:
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
     # Flag to track if credentials were loaded from store
     _credentials_loaded_from_store: bool = False 
+    # ==================== LICENSING CONFIGURATION ====================
+    # Licensing server URL
+    LICENSING_SERVER_URL: str = os.getenv("LICENSING_SERVER_URL", "http://localhost:8100")
+    
+    # License validation
+    LICENSE_KEY: str = ""
+    LICENSE_TIER: str = "TRIAL"  # TRIAL, BASIC, ADVANCED, PRO
+    LICENSE_VALID: bool = False
+    LICENSE_FEATURES: dict = {}
+    
+    # Feature flags (controlled by license tier)
+    FEATURE_MANUAL_TRADING: bool = True  # Default for development
+    FEATURE_AUTO_TRADING: bool = True    # Default for development
     # Environment
     USE_SANDBOX: bool = os.getenv("USE_SANDBOX", "true").lower() == "true"
     
@@ -77,7 +137,7 @@ class Config:
         "index_exchange": "IDX_I",
         "expiry_day": "TUESDAY",  # Nifty weekly expiry
         "expiry_type": "WEEKLY",
-        "lot_size": 25,
+        "lot_size": 75,
     }
     
     # BankNifty Configuration
@@ -90,7 +150,7 @@ class Config:
         "index_exchange": "IDX_I",
         "expiry_day": "LAST_TUESDAY",  # BankNifty monthly expiry (last Tuesday)
         "expiry_type": "MONTHLY",
-        "lot_size": 15,
+        "lot_size": 35,
     }
     
     # ==================== THETA DECAY SETTINGS ====================
@@ -279,13 +339,77 @@ class Config:
         return DhanContext(cls.DHAN_CLIENT_ID, cls.DHAN_ACCESS_TOKEN)
     
     @classmethod
+    def validate_license(cls, use_cache: bool = True) -> bool:
+        """
+        Validate license and fetch OpenAI key from licensing server.
+        Returns True if license is valid, False otherwise.
+        """
+        try:
+            from src.utils.licensing_client import licensing_client
+            from src.utils.logger import log
+            
+            # Validate license
+            #result = licensing_client.validate_license()
+            result = licensing_client.validate_license(use_cache=use_cache) 
+            
+            if not result.get("success"):
+                error = result.get("error", "Unknown error")
+                log.error(f"❌ License validation failed: {error}")
+                cls.LICENSE_VALID = False
+                return False
+            
+            # Extract license data
+            data = result.get("data", {})
+            
+            cls.LICENSE_KEY = licensing_client.load_license_key() or ""
+            cls.LICENSE_TIER = data.get("tier", "TRIAL")
+            cls.LICENSE_VALID = data.get("valid", False)
+            cls.LICENSE_FEATURES = data.get("features", {})
+            
+            # Set OpenAI configuration from license
+            cls.OPENAI_API_KEY = data.get("openai_key", cls.OPENAI_API_KEY)
+            cls.OPENAI_MODEL = data.get("openai_model", cls.OPENAI_MODEL)
+            
+            # Set feature flags based on tier
+            cls.FEATURE_MANUAL_TRADING = cls.LICENSE_FEATURES.get("manual_trading", False)
+            cls.FEATURE_AUTO_TRADING = cls.LICENSE_FEATURES.get("auto_trading", False)
+            
+            # Log license status
+            from_cache = result.get("from_cache", False)
+            cache_msg = " (from cache)" if from_cache else ""
+            
+            log.info(f"✅ License validated{cache_msg}")
+            log.info(f"   Tier: {cls.LICENSE_TIER}")
+            log.info(f"   Manual Trading: {'✅' if cls.FEATURE_MANUAL_TRADING else '❌'}")
+            log.info(f"   Auto Trading: {'✅' if cls.FEATURE_AUTO_TRADING else '❌'}")
+            log.info(f"   OpenAI Model: {cls.OPENAI_MODEL}")
+            
+            # Check for scrip master updates
+            update_check = licensing_client.check_scrip_master_update()
+            if update_check.get("has_update"):
+                log.info(f"📦 Scrip master update available: {update_check.get('version')}")
+            
+            return True
+            
+        except Exception as e:
+            log.error(f"❌ License validation error: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+            cls.LICENSE_VALID = False
+            return False
+    
+    @classmethod
     def validate(cls) -> bool:
         """Validate configuration."""
         required_fields = [
             ("DHAN_CLIENT_ID", cls.DHAN_CLIENT_ID),
             ("DHAN_ACCESS_TOKEN", cls.DHAN_ACCESS_TOKEN),
-            ("OPENAI_API_KEY", cls.OPENAI_API_KEY),
         ]
+        
+        # OpenAI key will be fetched from licensing server, so don't require it here
+        # unless licensing is disabled (development mode)
+        if not cls.LICENSE_VALID and not cls.OPENAI_API_KEY:
+            required_fields.append(("OPENAI_API_KEY", cls.OPENAI_API_KEY))
         
         missing = [name for name, value in required_fields if not value]
         
@@ -293,7 +417,6 @@ class Config:
             raise ValueError(f"Missing required configuration: {', '.join(missing)}")
         
         return True
-
 # ==================== INITIALIZE CREDENTIALS ====================
 # Call this AFTER the class is fully defined
 Config.load_dhan_credentials()

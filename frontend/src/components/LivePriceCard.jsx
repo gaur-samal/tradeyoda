@@ -21,7 +21,7 @@ export default function LivePriceCard() {
     fetchLivePrice()
     
     // Set up polling every 5 seconds
-    const interval = setInterval(fetchLivePrice, 5000)
+    const interval = setInterval(fetchLivePrice, 10000)
     
     return () => clearInterval(interval)
   }, [])

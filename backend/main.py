@@ -24,8 +24,16 @@ from src.config import config
 from src.config import Config
 from src.utils.logger import log
 from src.utils.credentials_store import credentials_store
+from middleware import check_auto_trading_feature,check_manual_trading_feature
 # ===== LOAD STORED CREDENTIALS (after logger is initialized) =====
 config.load_dhan_credentials()
+
+# ===== VALIDATE LICENSE (Fetch OpenAI key from licensing server) =====
+try:
+    config.validate_license()
+except Exception as e:
+    log.warning(f"⚠️ License validation failed: {e}")
+    log.warning("⚠️ Running in development mode without licensing")
 
 # Global orchestrator instance
 orchestrator: Optional[TradingOrchestrator] = None
@@ -119,6 +127,34 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# ===== SUPPRESS FREQUENT ENDPOINT LOGS (BETTER METHOD) =====
+class QuietEndpointFilter(logging.Filter):
+    """Suppress logs for frequently polled endpoints."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return False to suppress the log."""
+        message = record.getMessage()
+
+        # List of paths to suppress
+        quiet_paths = [
+            "/api/market/live-price",
+            "/api/status",
+            "/api/trades/active",
+            "/api/pnl/total",
+            "/api/monitoring-status",
+            "/health"
+        ]
+
+        # Suppress if message contains any quiet path
+        for path in quiet_paths:
+            if path in message:
+                return False  # Don't log
+
+        return True  # Log normally
+
+# Apply filter to uvicorn access logger
+logging.getLogger("uvicorn.access").addFilter(QuietEndpointFilter())
+
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
@@ -127,37 +163,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.middleware("http")
-async def suppress_frequent_endpoint_logs(request: Request, call_next):
-    """Suppress access logs for frequently polled endpoints."""
-
-    # List of endpoints to suppress logging
-    quiet_paths = [
-        "/api/market/live-price",
-        "/api/status",
-        "/health",
-        "/api/monitoring-status"
-    ]
-
-    # Check if this is a quiet endpoint
-    should_suppress = any(request.url.path == path for path in quiet_paths)
-
-    if should_suppress:
-        # Temporarily disable uvicorn access logging
-        original_level = uvicorn_logger.level
-        uvicorn_logger.setLevel(logging.WARNING)
-
-        response = await call_next(request)
-
-        # Restore original level
-        uvicorn_logger.setLevel(original_level)
-        return response
-
-    # Normal logging for other endpoints
-    return await call_next(request)
-
 
 # ==================== HEALTH CHECK ====================
 
@@ -286,7 +291,8 @@ async def start_continuous_monitoring():
     """Start continuous automated trading."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
+    # ===== FEATURE GATE: Auto Trading =====
+    check_auto_trading_feature() 
     try:
         if not orchestrator.is_running:
             orchestrator.start()
@@ -382,7 +388,8 @@ async def run_trade_identification():
     """Run 3-minute trade identification cycle."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
+    # ===== FEATURE GATE: Manual Trading =====
+    check_manual_trading_feature() 
     try:
         log.info("🎯 Running trade identification via API...")
         result = await orchestrator.run_trade_identification_cycle()
@@ -433,18 +440,78 @@ async def get_trades():
     trades = clean_json_data(trades)
     return {"trades": trades, "count": len(trades)}
 
+
 @app.get("/api/trades/active")
 async def get_active_trades():
-    """Get only active trades."""
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
-    all_trades = orchestrator.get_active_trades()
-    active_trades = [t for t in all_trades if t.get('status') == 'ACTIVE']
-    
-    # Clean and return
-    active_trades = clean_json_data(active_trades)
-    return {"trades": active_trades, "count": len(active_trades)}
+    """Get active trades from Dhan (live) or memory (paper)."""
+    try:
+        if not orchestrator:
+            return {"trades": [], "mode": "none"}
+
+        trades = orchestrator.get_active_trades()
+        mode = "paper" if orchestrator.config.USE_SANDBOX else "live"
+
+        return {
+            "trades": trades,
+            "mode": mode,
+            "count": len(trades)
+        }
+    except Exception as e:
+        log.error(f"Get active trades error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/pnl/total")
+async def get_total_pnl():
+    """Get total P&L from Dhan."""
+    try:
+        if not orchestrator:
+            return {"total_pnl": 0}
+
+        pnl_data = orchestrator.get_total_pnl()
+        return pnl_data
+    except Exception as e:
+        log.error(f"Get P&L error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/positions")
+async def get_positions():
+    """Get all positions from Dhan."""
+    try:
+        if not orchestrator:
+            return {"positions": []}
+        
+        if orchestrator.config.USE_SANDBOX:
+            return {
+                "positions": [],
+                "message": "Paper trading mode - no real positions"
+            }
+        
+        positions = orchestrator.data_agent.get_positions()
+        return positions
+    except Exception as e:
+        log.error(f"Get positions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/orders")
+async def get_orders():
+    """Get all orders from Dhan."""
+    try:
+        if not orchestrator:
+            return {"orders": []}
+        
+        if orchestrator.config.USE_SANDBOX:
+            return {
+                "orders": [],
+                "message": "Paper trading mode - no real orders"
+            }
+        
+        orders = orchestrator.data_agent.get_orders()
+        return orders
+    except Exception as e:
+        log.error(f"Get orders error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/trades/statistics")
 async def get_trade_statistics():
@@ -1119,6 +1186,104 @@ async def general_exception_handler(request, exc):
         status_code=500,
         content={"error": "Internal server error", "timestamp": datetime.now().isoformat()}
     )
+
+# ==================== LICENSE MANAGEMENT ====================
+
+@app.get("/api/license/status")
+async def get_license_status():
+    """Get current license status."""
+    try:
+        from src.utils.licensing_client import licensing_client
+
+        tier_info = licensing_client.get_tier_info()
+
+        return {
+            "success": True,
+            "licensed": config.LICENSE_VALID,
+            "tier": config.LICENSE_TIER,
+            "features": config.LICENSE_FEATURES,
+            "openai_model": config.OPENAI_MODEL,
+            "manual_trading_enabled": config.FEATURE_MANUAL_TRADING,
+            "auto_trading_enabled": config.FEATURE_AUTO_TRADING,
+            "expires_at": tier_info.get("expires_at")
+        }
+    except Exception as e:
+        log.error(f"Error getting license status: {e}")
+        return {
+            "success": False,
+            "licensed": False,
+            "tier": "NONE",
+            "error": str(e)
+        }
+
+@app.post("/api/license/activate")
+async def activate_license(request: dict):
+    """Activate a license key."""
+    try:
+        from src.utils.licensing_client import licensing_client
+
+        license_key = request.get("license_key", "").strip()
+
+        if not license_key:
+            raise HTTPException(status_code=400, detail="License key is required")
+
+        # Activate license
+        result = licensing_client.activate_license(license_key)
+
+        if result.get("success"):
+            # Reload license configuration
+            config.validate_license()
+
+            return {
+                "success": True,
+                "message": "License activated successfully",
+                "tier": config.LICENSE_TIER,
+                "features": config.LICENSE_FEATURES
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "Activation failed")
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"License activation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/license/validate")
+async def revalidate_license():
+    """Force revalidation of license (bypasses cache)."""
+    try:
+        from src.utils.licensing_client import licensing_client
+        # CRITICAL: Clear cache before revalidation
+        log.info(f"🗑️ Clearing cache for fresh validation")
+        licensing_client.clear_cache()
+
+        # Force validation without cache
+        result = licensing_client.validate_license(use_cache=False)
+
+        if result.get("success"):
+            # Reload configuration
+            log.info(f"✅ License activated, fetching fresh validation(NO CACHE)")
+            config.validate_license(use_cache=False)
+
+            return {
+                "success": True,
+                "message": "License revalidated successfully",
+                "tier": config.LICENSE_TIER,
+                "features": config.LICENSE_FEATURES
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "Validation failed")
+            }
+
+    except Exception as e:
+        log.error(f"License validation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== STARTUP MESSAGE ====================
 

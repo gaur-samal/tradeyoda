@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Save, RefreshCw, AlertTriangle, Edit, Key, Info, CheckCircle } from 'lucide-react'
 import useStore from '../store/useStore'
 import { getConfig, updateConfig } from '../utils/api'
+import LicenseSettings from '../components/LicenseSettings'
 
 export default function Settings() {
   const { config, setConfig } = useStore()
@@ -153,7 +154,8 @@ export default function Settings() {
           </p>
         </div>
       )}
-      
+      {/* License Management - NEW */}
+      <LicenseSettings /> 
       {/* Dhan API Credentials */}
       <div className="card p-6 border-2 border-blue-500/30">
         <div className="flex items-center gap-3 mb-6">

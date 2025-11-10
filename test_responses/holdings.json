@@ -1,0 +1,9 @@
+{
+  "status": "failure",
+  "remarks": {
+    "error_code": "DH-1111",
+    "error_type": "HOLDING_ERROR",
+    "error_message": "No holdings available"
+  },
+  "data": ""
+}

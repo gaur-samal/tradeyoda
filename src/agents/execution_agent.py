@@ -1,4 +1,6 @@
 """Execution agent compatible with DhanHQ v2.2 (OrderUpdate synchronous)."""
+import requests
+import json
 import ssl, certifi, websocket
 import threading, time
 from datetime import datetime
@@ -146,6 +148,47 @@ class ExecutionAgent:
         except Exception as e:
             log.error(f"❌ Order placement error: {e}")
             return {"success": False, "error": str(e)}
+
+    def place_super_order(self, order_params):
+        """
+        Place a Super Order directly via the Dhan API.
+        
+        Args:
+            order_params: dict with required order fields
+        
+        Returns:
+            dict response from Dhan
+        """
+        try:
+            # Get access token and client ID
+            # You can fetch from your credential store/config, or pass into ExecutionAgent
+            dhan_client_id = self.dhan_context.client_id
+            access_token = self.dhan_context.access_token
+
+            headers = {
+                "Content-Type": "application/json",
+                "access-token": access_token,
+            }
+            url = "https://api.dhan.co/v2/super/orders"
+
+            # Ensure required params
+            payload = order_params.copy()
+            if "dhanClientId" not in payload:
+                payload["dhanClientId"] = dhan_client_id
+
+            log.info(f"Sending Super Order API request: {payload}")
+            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
+            if response.status_code == 200:
+                result = response.json()
+                log.info(f"Super order response: {result}")
+                return {"success": True, **result}
+            else:
+                log.error(f"Super order error: {response.status_code} {response.text}")
+                return {"success": False, "status_code": response.status_code, "error": response.text}
+
+        except Exception as e:
+            log.error(f"Exception placing super order: {e}")
+            return {"success": False, "error": str(e)}    
 
     def place_bracket_or_super_order(self, setup: dict) -> dict:
         """

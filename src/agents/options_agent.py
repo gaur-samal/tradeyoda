@@ -567,9 +567,9 @@ class OptionsAnalysisAgent:
             from src.utils.theta_calculator import theta_calculator
             
             # INTRADAY CONFIGURATION
-            MAX_INTRADAY_MOVE = 200  # Cap target at 200 points
+            MAX_INTRADAY_MOVE = 150  # Cap target at 150 points
             DEFAULT_TARGET_POINTS = 80  # Default 80-point target
-            STOP_LOSS_PERCENT = 5  # 5% of premium (tight SL)
+            STOP_LOSS_PERCENT = 2  # % of premium (tight SL)
             MIN_RR_INTRADAY = 2.0  # 2:1 minimum R:R
             
             # THETA CONFIGURATION

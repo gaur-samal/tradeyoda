@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Tuple
 from src.utils.logger import log
+from src.utils.desktop_config import desktop_config
 
 class SecurityMaster:
     """Manage security master data for option contracts."""
@@ -16,9 +17,25 @@ class SecurityMaster:
             csv_path: Path to api-scrip-master.csv file
         """
         if csv_path is None:
-            # Default path
-            csv_path = Path(__file__).parent.parent.parent / "api-scrip-master.csv"
-        
+            # Lazy load desktop config to avoid circular imports
+            try:
+                # Import directly without triggering package __init__
+                import importlib.util
+                desktop_config_path = Path(__file__).parent / 'desktop_config.py'
+                
+                spec = importlib.util.spec_from_file_location("desktop_config_module", str(desktop_config_path))
+                desktop_config_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(desktop_config_module)
+                
+                desktop_config = desktop_config_module.desktop_config
+                if desktop_config.is_desktop_mode:
+                    csv_path = desktop_config.scrip_master_file
+                else:
+                    # Default path for web/dev mode
+                    csv_path = Path(__file__).parent.parent.parent / "api-scrip-master.csv"
+            except Exception:
+                # Fallback if desktop_config not available
+                csv_path = Path(__file__).parent.parent.parent / "api-scrip-master.csv"
         self.csv_path = Path(csv_path)
         self.df = None
         self.load_csv()
@@ -327,4 +344,5 @@ class SecurityMaster:
 
 # Global instance
 security_master = SecurityMaster()
+
 

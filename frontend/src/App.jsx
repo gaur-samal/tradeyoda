@@ -5,6 +5,7 @@ import Analysis from './pages/Analysis'
 import Trades from './pages/Trades'
 import Settings from './pages/Settings'
 import DhanSetup from './pages/DhanSetup'
+import LicenseSettings from './components/LicenseSettings'
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route path="trades" element={<Trades />} />
 	  {/*<Route path="dhan-setup" element={<DhanSetup />} />*/}
           <Route path="settings" element={<Settings />} />
+	  <Route path="/settings/license" element={<LicenseSettings />} />
         </Route>
       </Routes>
     </BrowserRouter>
