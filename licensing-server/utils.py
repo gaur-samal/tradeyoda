@@ -95,7 +95,7 @@ def get_tier_features(tier: str) -> dict:
             "zone_analysis": True,
             "manual_trading": True,
             "auto_trading": True,
-            "openai_model": "gpt-5",
+            "openai_model": "gpt-4.1",
             "support_level": "premium_oncall",
             "expires": False,
         },
