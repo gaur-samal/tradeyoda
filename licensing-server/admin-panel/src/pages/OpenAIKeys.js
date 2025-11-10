@@ -121,7 +121,7 @@ const OpenAIKeys = () => {
             { tier: 'TRIAL', model: 'gpt-4o-mini', description: '14-day trial period' },
             { tier: 'BASIC', model: 'gpt-4o-mini', description: 'Analysis only' },
             { tier: 'ADVANCED', model: 'gpt-4o', description: 'Analysis + Manual Trading' },
-            { tier: 'PRO', model: 'gpt-5', description: 'Full automation' },
+            { tier: 'PRO', model: 'gpt-4.1', description: 'Full automation' },
           ]}
           columns={[
             {
